@@ -1,0 +1,3560 @@
+import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/doctor_model.dart';
+import '../models/appointment_model.dart';
+import '../models/medicine_model.dart';
+import '../models/user_model.dart';
+import '../models/cart_item_model.dart';
+import '../models/nurse_model.dart';
+import '../models/specialty_model.dart';
+import '../models/hospital_service_model.dart';
+import '../models/hospital_info_model.dart';
+import '../models/banner_model.dart';
+import 'supabase_service.dart';
+import 'encryption_service.dart';
+
+class AppState extends ChangeNotifier {
+  AppState() {
+    _loadDoctorSettingsFromPrefs();
+    _loadProfileFromPrefs();
+    _loadCartFromPrefs();
+    _loadDataFromSupabase();
+    loadNotificationsFromSupabase();
+  }
+
+  final Set<String> _verifiedDoctorIds = {};
+  final Map<String, bool> _doctorAvailabilityMap = {};
+
+  final List<DoctorModel> _customDoctors = [];
+  final List<DoctorModel> _doctors = [];
+  final List<NurseModel> _nurses = [];
+
+  Future<void> _saveCustomDoctorsToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final listMap = _customDoctors.map((d) => d.toJson()).toList();
+      await prefs.setString('saved_custom_doctors_v1', jsonEncode(listMap));
+    } catch (e) {
+      debugPrint("Error saving custom doctors: $e");
+    }
+  }
+
+  Future<void> _loadCustomDoctorsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.containsKey('saved_custom_doctors_v1')) {
+        final jsonStr = prefs.getString('saved_custom_doctors_v1');
+        if (jsonStr != null) {
+          final List<dynamic> list = jsonDecode(jsonStr);
+          _customDoctors.clear();
+          for (var map in list) {
+            final doc = DoctorModel.fromJson(Map<String, dynamic>.from(map));
+            _customDoctors.add(doc);
+            if (!_doctors.any((d) => d.id == doc.id)) {
+              _doctors.insert(0, doc);
+            }
+          }
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint("Error loading custom doctors: $e");
+    }
+  }
+
+  Future<void> _loadDoctorSettingsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.containsKey('saved_global_online_status_v1')) {
+        _globalDoctorOnlineStatus =
+            prefs.getBool('saved_global_online_status_v1') ?? true;
+      }
+      final savedVerified = prefs.getStringList('saved_verified_doctor_ids_v2');
+      if (savedVerified != null) {
+        _verifiedDoctorIds.addAll(savedVerified);
+      }
+      final savedAvailJson = prefs.getString(
+        'saved_doctor_availability_map_v2',
+      );
+      if (savedAvailJson != null) {
+        final Map<String, dynamic> map = jsonDecode(savedAvailJson);
+        map.forEach((k, v) {
+          _doctorAvailabilityMap[k] = v == true;
+        });
+      }
+      _applyDoctorSettingsToMemory();
+      await _loadCustomDoctorsFromPrefs();
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Error loading doctor settings from SharedPreferences: $e");
+    }
+  }
+
+  Future<void> _saveDoctorSettingsToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        'saved_global_online_status_v1',
+        _globalDoctorOnlineStatus,
+      );
+      await prefs.setStringList(
+        'saved_verified_doctor_ids_v2',
+        _verifiedDoctorIds.toList(),
+      );
+      await prefs.setString(
+        'saved_doctor_availability_map_v2',
+        jsonEncode(_doctorAvailabilityMap),
+      );
+    } catch (e) {
+      debugPrint("Error saving doctor settings to SharedPreferences: $e");
+    }
+  }
+
+  void _applyDoctorSettingsToMemory() {
+    for (int i = 0; i < _doctors.length; i++) {
+      final doc = _doctors[i];
+      final bool isV = _verifiedDoctorIds.contains(doc.id) || doc.isVerified;
+      final bool isA =
+          _doctorAvailabilityMap[doc.id] ?? _globalDoctorOnlineStatus;
+      if (isV) {
+        _verifiedDoctorIds.add(doc.id);
+      }
+      _doctorAvailabilityMap[doc.id] = isA;
+      _doctors[i] = doc.copyWith(isVerified: isV, isAvailable: isA);
+    }
+  }
+
+  Future<void> _loadProfileFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _isLoggedIn = prefs.getBool('is_logged_in_v1') ?? (FirebaseAuth.instance.currentUser != null);
+      if (_isLoggedIn && prefs.containsKey('user_profile_v1')) {
+        final jsonStr = prefs.getString('user_profile_v1');
+        if (jsonStr != null) {
+          final map = jsonDecode(jsonStr);
+          _currentUser = UserModel.fromJson(Map<String, dynamic>.from(map));
+        }
+      } else if (!_isLoggedIn) {
+        _currentUser = null;
+      }
+      final savedAvatar = prefs.getString('saved_user_avatar_v1');
+      if (savedAvatar != null &&
+          savedAvatar.isNotEmpty &&
+          _currentUser != null) {
+        _currentUser = _currentUser!.copyWith(avatarUrl: savedAvatar);
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Error loading profile from SharedPreferences: $e");
+    }
+  }
+
+  Future<void> _saveProfileToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_logged_in_v1', _isLoggedIn);
+      if (_currentUser != null) {
+        await prefs.setString(
+          'user_profile_v1',
+          jsonEncode(_currentUser!.toJson()),
+        );
+        if (_currentUser!.avatarUrl.isNotEmpty) {
+          await prefs.setString(
+            'saved_user_avatar_v1',
+            _currentUser!.avatarUrl,
+          );
+        }
+      } else {
+        await prefs.remove('user_profile_v1');
+        await prefs.remove('saved_user_avatar_v1');
+      }
+    } catch (e) {
+      debugPrint("Error saving profile to SharedPreferences: $e");
+    }
+  }
+
+  Future<void> _loadCartFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.containsKey('permanent_cart_items_v1')) {
+        final String? jsonStr = prefs.getString('permanent_cart_items_v1');
+        if (jsonStr != null && jsonStr.trim() != '[]' && jsonStr.trim().isNotEmpty) {
+          final List<dynamic> list = jsonDecode(jsonStr);
+          if (list.isNotEmpty) {
+            _cartItems.clear();
+            for (var itemMap in list) {
+              _cartItems.add(
+                CartItemModel.fromJson(Map<String, dynamic>.from(itemMap)),
+              );
+            }
+            notifyListeners();
+          }
+        }
+      } else {
+        _saveCartToPrefs();
+      }
+    } catch (e) {
+      debugPrint("Error loading cart from SharedPreferences: $e");
+    }
+  }
+
+  Future<void> _saveCartToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final listMap = _cartItems.map((item) => item.toJson()).toList();
+      await prefs.setString('permanent_cart_items_v1', jsonEncode(listMap));
+    } catch (e) {
+      debugPrint("Error saving cart to SharedPreferences: $e");
+    }
+  }
+
+  Future<void> fetchDoctors() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) {
+      debugPrint("[DOCTORS] Supabase client unavailable or not initialized.");
+      return;
+    }
+
+    try {
+      debugPrint(
+        "[DOCTORS] Fetch started from Supabase target: ${SupabaseService.instance.supabaseUrl}",
+      );
+      final doctorsData = await client.from('doctors').select();
+      debugPrint(
+        "[DOCTORS] Supabase returned ${doctorsData.length} records from doctors table.",
+      );
+
+      if (doctorsData.isNotEmpty) {
+        final List<DoctorModel> parsed = [];
+        for (var d in doctorsData) {
+          final doc = DoctorModel.fromJson(d);
+          debugPrint(
+            "[DOCTORS] Loaded Doctor from DB: ID=${doc.id}, Name=${doc.name}, Specialty=${doc.specialty}, isAvailable=${doc.isAvailable}",
+          );
+
+          final String rawImg = doc.imageUrl.trim();
+          String validImg = (rawImg.isNotEmpty && rawImg != 'null')
+              ? rawImg
+              : '';
+          if (validImg.startsWith('data:image')) {
+            debugPrint(
+              "[DOCTORS] Found legacy Base64 string in DB row ID=${doc.id}. Sanitizing for egress safety.",
+            );
+            validImg = '';
+          }
+
+          final bool statusBool =
+              (d['is_online'] == true || d['is_online']?.toString() == 'true');
+          final updatedDoc = doc.copyWith(
+            imageUrl: validImg,
+            isOnline: statusBool,
+            isAvailable: statusBool,
+          );
+
+          // Exclude any legacy nurse rows from doctors list
+          if (!updatedDoc.specialty.toLowerCase().contains('kalkaaliso') &&
+              !updatedDoc.specialty.toLowerCase().contains('nurse')) {
+            parsed.add(updatedDoc);
+          }
+        }
+        if (parsed.isNotEmpty) {
+          _doctors.clear();
+          _doctors.addAll(parsed);
+        }
+      } else {
+        debugPrint(
+          "[DOCTORS] Notice: doctors table returned 0 rows (check database entries or RLS SELECT policies). Preserving fallback list.",
+        );
+      }
+
+      // Fetch dedicated 'nurses' table in Supabase DB
+      try {
+        final nursesData = await client.from('nurses').select();
+        _nurses.clear();
+        if (nursesData.isNotEmpty) {
+          for (var n in nursesData) {
+            final String nurseId = n['id']?.toString() ?? '';
+            final String nurseName = n['name']?.toString() ?? '';
+            if (nurseId.isNotEmpty && nurseName.isNotEmpty) {
+              _nurses.add(
+                NurseModel(
+                  id: nurseId,
+                  name: nurseName,
+                  specialty: n['specialty'] ?? 'Kalkaaliso',
+                  imageUrl: n['image_url'] ?? n['imageUrl'] ?? '',
+                ),
+              );
+            }
+          }
+        }
+      } catch (nurseErr) {
+        debugPrint("[NURSES] Dedicated nurses table fetch notice: $nurseErr");
+      }
+
+      // Merge any nurse records from doctors table into _nurses list
+      if (doctorsData.isNotEmpty) {
+        for (var d in doctorsData) {
+          final String spec = (d['specialty'] ?? '').toString().toLowerCase();
+          if (spec.contains('kalkaaliso') || spec.contains('nurse')) {
+            final String nId = d['id']?.toString() ?? '';
+            final String nName = d['name']?.toString() ?? '';
+            if (nId.isNotEmpty &&
+                nName.isNotEmpty &&
+                !_nurses.any((n) => n.id == nId || n.name == nName)) {
+              _nurses.add(
+                NurseModel(
+                  id: nId,
+                  name: nName,
+                  specialty: d['specialty']?.toString() ?? 'Kalkaaliso',
+                  imageUrl: d['image_url']?.toString() ?? '',
+                ),
+              );
+            }
+          }
+        }
+      }
+
+      debugPrint(
+        "[DOCTORS] Final _doctors count: ${_doctors.length}. Calling notifyListeners()",
+      );
+      notifyListeners();
+    } catch (e) {
+      debugPrint("[DOCTORS] Fetch error from Supabase: $e");
+    }
+  }
+
+  Future<void> fetchMedicines() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    try {
+      final medicinesData = await client.from('medicines').select();
+      if (medicinesData.isNotEmpty) {
+        final List<MedicineModel> parsedMeds = [];
+        for (var m in medicinesData) {
+          parsedMeds.add(
+            MedicineModel.fromJson(Map<String, dynamic>.from(m)),
+          );
+        }
+        _medicines.clear();
+        _medicines.addAll(parsedMeds);
+        notifyListeners();
+        debugPrint('[MEDICINES] fetchMedicines → ${_medicines.length} items loaded');
+      }
+    } catch (medErr) {
+      debugPrint('[MEDICINES] Supabase fetch error: $medErr');
+    }
+  }
+
+  Future<void> fetchNurses() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    try {
+      final response = await client.from('nurses').select().order('created_at', ascending: false);
+      _nurses.clear();
+      if (response.isNotEmpty) {
+        for (var n in response) {
+          final String nurseId = n['id']?.toString() ?? '';
+          final String nurseName = n['name']?.toString() ?? '';
+          if (nurseId.isNotEmpty && nurseName.isNotEmpty) {
+            _nurses.add(NurseModel.fromJson(Map<String, dynamic>.from(n)));
+          }
+        }
+      }
+      notifyListeners();
+      debugPrint('⚡ [NURSES] fetchNurses → ${_nurses.length} nurses loaded');
+    } catch (e) {
+      debugPrint('Error fetching nurses: $e');
+      try {
+        final response = await client.from('nurses').select();
+        _nurses.clear();
+        if (response.isNotEmpty) {
+          for (var n in response) {
+            final String nurseId = n['id']?.toString() ?? '';
+            final String nurseName = n['name']?.toString() ?? '';
+            if (nurseId.isNotEmpty && nurseName.isNotEmpty) {
+              _nurses.add(NurseModel.fromJson(Map<String, dynamic>.from(n)));
+            }
+          }
+        }
+        notifyListeners();
+        debugPrint('⚡ [NURSES] fetchNurses fallback → ${_nurses.length} nurses loaded');
+      } catch (fallbackErr) {
+        debugPrint('Error fetching nurses fallback: $fallbackErr');
+      }
+    }
+  }
+
+  void listenToRealtimeAdminChanges() {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    // A. Live sync for Medicines (Dawooyinka)
+    client
+        .channel('public:medicines_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'medicines',
+          callback: (payload) async {
+            debugPrint('Medicines table changed: ${payload.eventType}');
+            await fetchMedicines();
+            notifyListeners();
+          },
+        )
+        .subscribe();
+
+    // B. Live sync for Doctors (Dhaqaatiirta)
+    client
+        .channel('public:doctors_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'doctors',
+          callback: (payload) async {
+            debugPrint('Doctors table changed: ${payload.eventType}');
+            await fetchDoctors();
+            notifyListeners();
+          },
+        )
+        .subscribe();
+
+    // C. Live sync for Nurses (Kalkaaliyaasha)
+    client
+        .channel('nurses-realtime-channel')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'nurses',
+          callback: (payload) async {
+            debugPrint('⚡ [REALTIME] Nurses table changed (${payload.eventType}). Refetching...');
+            await fetchNurses();
+          },
+        )
+        .subscribe((status, [error]) {
+          debugPrint('⚡ [REALTIME STATUS] Nurses subscription: $status, error: $error');
+        });
+  }
+
+  Future<void> _loadDataFromSupabase() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) {
+      debugPrint(
+        "AppState: Supabase client not initialized or offline. Using local store.",
+      );
+      return;
+    }
+
+    try {
+      // 1. Fetch Doctors & Nurses
+      await fetchDoctors();
+
+      // Subscribe to Realtime Doctor Changes (INSERT, UPDATE, DELETE)
+      try {
+        client
+            .channel('public:doctors_realtime_all')
+            .onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'doctors',
+              callback: (payload) {
+                debugPrint(
+                  "[DOCTORS_REALTIME] Postgres event received on doctors table: ${payload.eventType}",
+                );
+                fetchDoctors();
+              },
+            )
+            .subscribe();
+      } catch (e) {
+        debugPrint("Notice subscribing to doctors realtime: $e");
+      }
+
+      // 2. Fetch Medicines
+      try {
+        final medicinesData = await client.from('medicines').select();
+        if (medicinesData.isNotEmpty) {
+          final List<MedicineModel> parsedMeds = [];
+          for (var m in medicinesData) {
+            parsedMeds.add(
+              MedicineModel.fromJson(Map<String, dynamic>.from(m)),
+            );
+          }
+          if (parsedMeds.isNotEmpty) {
+            _medicines.clear();
+            _medicines.addAll(parsedMeds);
+          }
+        }
+      } catch (medErr) {
+        debugPrint("[MEDICINES] Supabase fetch notice: $medErr");
+      }
+
+      // 3. Fetch Appointments
+      final appointmentsData = await client.from('appointments').select();
+      if (appointmentsData.isNotEmpty) {
+        _appointments.clear();
+        for (var a in appointmentsData) {
+          _appointments.add(
+            AppointmentModel(
+              id: a['id'].toString(),
+              referenceId: a['reference_id'] ?? '',
+              doctorId: a['doctor_id']?.toString() ?? '',
+              doctorName: a['doctor_name'] ?? '',
+              doctorSpecialty: a['doctor_specialty'] ?? '',
+              doctorImageUrl: '',
+              hospitalName: 'Nasiib Hospital',
+              date: a['date'] ?? '',
+              time: a['time'] ?? '',
+              appointmentType: a['appointment_type'] ?? 'New Patient',
+              patientName: a['patient_name'] ?? '',
+              patientPhone: a['patient_phone'] ?? '',
+              patientAge: a['patient_age'] ?? 20,
+              patientGender: a['patient_gender'] ?? 'Male',
+              reasonForVisit: a['reason'] ?? '',
+              paymentMethod: a['payment_method'] ?? 'EVC Plus',
+              amount: (a['amount'] as num?)?.toDouble() ?? 10.0,
+              queueNumber: a['queue_number'] ?? 1,
+              status: a['status'] ?? 'Upcoming',
+              createdAt: a['created_at'] ?? '',
+              patientImageUrl: a['patient_image'] ?? a['patient_avatar_url'] ?? a['patient_image_url'],
+            ),
+          );
+        }
+      }
+
+      // 4. Fetch Announcements / Notifications
+      final notificationsData = await client
+          .from('notifications')
+          .select()
+          .order('created_at', ascending: false);
+      _notifications.clear();
+      for (var n in notificationsData) {
+        String displayTime = 'Just now';
+        if (n['created_at'] != null) {
+          try {
+            final dt = DateTime.parse(n['created_at'].toString()).toLocal();
+            final day = dt.day.toString().padLeft(2, '0');
+            final months = [
+              'Jan',
+              'Feb',
+              'Mar',
+              'Apr',
+              'May',
+              'Jun',
+              'Jul',
+              'Aug',
+              'Sep',
+              'Oct',
+              'Nov',
+              'Dec',
+            ];
+            final month = months[dt.month - 1];
+            final hourNum = dt.hour > 12
+                ? (dt.hour - 12)
+                : (dt.hour == 0 ? 12 : dt.hour);
+            final minute = dt.minute.toString().padLeft(2, '0');
+            final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+            displayTime = '$day $month, $hourNum:$minute $ampm';
+          } catch (e) {
+            displayTime = n['created_at'].toString();
+          }
+        }
+        _notifications.add({
+          'id': n['id'].toString(),
+          'title': n['title'] ?? '',
+          'body': n['body'] ?? '',
+          'time': displayTime,
+          'isRead': false,
+        });
+      }
+
+      // Fetch Patients (Select only standard existing columns to avoid PGRST204 schema cache errors)
+      try {
+        final patientsData = await client
+            .from('patients')
+            .select('id, full_name, phone_number, email, avatar_url');
+        _dbPatients = List<Map<String, dynamic>>.from(patientsData);
+      } catch (e) {
+        debugPrint("Failed to fetch patients initially: $e");
+        // Fallback fetch all
+        try {
+          final patientsData = await client.from('patients').select();
+          _dbPatients = List<Map<String, dynamic>>.from(patientsData);
+        } catch (err) {
+          debugPrint("Failed fallback patients fetch: $err");
+        }
+      }
+
+      // 5. Fetch Messages
+      try {
+        final messagesData = await client
+            .from('messages')
+            .select()
+            .order('created_at', ascending: true);
+        _chatMessages.clear();
+        for (var msg in messagesData) {
+          final rawText = msg['text'] ?? '';
+          final decryptedText = EncryptionService.decrypt(rawText);
+
+          _chatMessages.add({
+            'id': msg['id'].toString(),
+            'sender_id': msg['sender_id'] ?? '',
+            'sender_name': msg['sender_name'] ?? '',
+            'text': decryptedText,
+            'image_url': msg['image_url'] ?? '',
+            'patient_id': msg['patient_id'] ?? '',
+            'doctor_id': msg['doctor_id'] ?? '',
+            'doctor_name': msg['doctor_name'] ?? '',
+            'time': msg['created_at'] != null
+                ? msg['created_at'].toString()
+                : '',
+            'is_read': msg['is_read'] ?? false,
+          });
+        }
+      } catch (err) {
+        debugPrint("Failed to fetch messages from Supabase: $err");
+      }
+
+      // 6. Fetch Specialties
+      try {
+        final specialtiesData = await client.from('specialties').select();
+        _specialties.clear();
+        for (var s in specialtiesData) {
+          _specialties.add(SpecialtyModel.fromJson(s));
+        }
+      } catch (err) {
+        debugPrint("Notice fetching specialties: $err");
+      }
+
+      // 7. Initial Fetch of Orders & Order Items
+      try {
+        final ordersData = await client
+            .from('orders')
+            .select()
+            .order('created_at', ascending: false);
+        final itemsData = await client.from('order_items').select();
+
+        _orders = List<Map<String, dynamic>>.from(ordersData);
+        _orderItems = List<Map<String, dynamic>>.from(itemsData);
+      } catch (err) {
+        debugPrint("Notice fetching initial orders: $err");
+      }
+
+      // 8. Subscribe to True Supabase Realtime Event Channels
+      initRealtimeSubscriptions();
+      listenToRealtimeAdminChanges();
+
+      notifyListeners();
+      debugPrint("AppState: Synced successfully with Supabase Realtime!");
+    } catch (e) {
+      debugPrint("AppState: Supabase sync error: $e");
+    }
+  }
+
+  // Navigation & User State
+  bool _isLoggedIn = false;
+  bool _isAdminMode = false;
+  int _currentPatientNavIndex =
+      0; // 0: Home, 1: Pharmacy, 2: Message, 3: Profile
+  String _selectedSpecialty = 'All';
+
+  String get selectedSpecialty => _selectedSpecialty;
+
+  UserModel? _currentUser;
+
+  // Nurses List getter
+  List<NurseModel> get nurses => _nurses;
+
+  // Dynamic Specialties
+  final List<SpecialtyModel> _specialties = [];
+  List<SpecialtyModel> get specialties =>
+      _specialties.where((s) => s.isActive).toList();
+  List<SpecialtyModel> get allSpecialties => List.unmodifiable(_specialties);
+
+  void addSpecialty(SpecialtyModel s) {
+    _specialties.insert(0, s);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('specialties')
+          .insert(s.toJson())
+          .catchError((e) => debugPrint("Add specialty error: $e"));
+    }
+  }
+
+  void updateSpecialty(SpecialtyModel s) {
+    final idx = _specialties.indexWhere((item) => item.id == s.id);
+    if (idx != -1) {
+      _specialties[idx] = s;
+      notifyListeners();
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('specialties')
+            .update(s.toJson())
+            .eq('id', s.id)
+            .catchError((e) => debugPrint("Update specialty error: $e"));
+      }
+    }
+  }
+
+  void deleteSpecialty(String id) {
+    _specialties.removeWhere((s) => s.id == id);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('specialties')
+          .delete()
+          .eq('id', id)
+          .catchError((e) => debugPrint("Delete specialty error: $e"));
+    }
+  }
+
+  // Dynamic Hospital Services
+  final List<HospitalServiceModel> _hospitalServices = [];
+  List<HospitalServiceModel> get hospitalServices =>
+      _hospitalServices.where((s) => s.isActive).toList();
+  List<HospitalServiceModel> get allHospitalServices =>
+      List.unmodifiable(_hospitalServices);
+
+  void addService(HospitalServiceModel s) {
+    _hospitalServices.insert(0, s);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('services')
+          .insert(s.toJson())
+          .catchError((e) => debugPrint("Add service error: $e"));
+    }
+  }
+
+  void updateService(HospitalServiceModel s) {
+    final idx = _hospitalServices.indexWhere((item) => item.id == s.id);
+    if (idx != -1) {
+      _hospitalServices[idx] = s;
+      notifyListeners();
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('services')
+            .update(s.toJson())
+            .eq('id', s.id)
+            .catchError((e) => debugPrint("Update service error: $e"));
+      }
+    }
+  }
+
+  void deleteService(String id) {
+    _hospitalServices.removeWhere((s) => s.id == id);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('services')
+          .delete()
+          .eq('id', id)
+          .catchError((e) => debugPrint("Delete service error: $e"));
+    }
+  }
+
+  // Dynamic Hospital Profile Info Settings
+  HospitalInfoModel _hospitalInfo = HospitalInfoModel();
+  HospitalInfoModel get hospitalInfo => _hospitalInfo;
+
+  void updateHospitalInfo(HospitalInfoModel info) {
+    _hospitalInfo = info;
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('hospital_info')
+          .upsert(info.toJson())
+          .catchError((e) => debugPrint("Update hospital_info error: $e"));
+    }
+  }
+
+  // Dynamic Banners
+  final List<BannerModel> _banners = [];
+  List<BannerModel> get banners => _banners.where((b) => b.isActive).toList();
+  List<BannerModel> get allBanners => List.unmodifiable(_banners);
+
+  void addBanner(BannerModel b) {
+    _banners.insert(0, b);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('banners')
+          .insert(b.toJson())
+          .catchError((e) => debugPrint("Add banner error: $e"));
+    }
+  }
+
+  void updateBanner(BannerModel b) {
+    final idx = _banners.indexWhere((item) => item.id == b.id);
+    if (idx != -1) {
+      _banners[idx] = b;
+      notifyListeners();
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('banners')
+            .update(b.toJson())
+            .eq('id', b.id)
+            .catchError((e) => debugPrint("Update banner error: $e"));
+      }
+    }
+  }
+
+  void deleteBanner(String id) {
+    _banners.removeWhere((b) => b.id == id);
+    notifyListeners();
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('banners')
+          .delete()
+          .eq('id', id)
+          .catchError((e) => debugPrint("Delete banner error: $e"));
+    }
+  }
+
+  String? lastNurseError;
+
+  Future<bool> addNurse(NurseModel nurse, {Uint8List? imageBytes}) async {
+    lastNurseError = null;
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) {
+      lastNurseError = "Supabase client offline or uninitialized.";
+      debugPrint("[NURSES_ADD] Error: $lastNurseError");
+      return false;
+    }
+
+    try {
+      // 1. Upload binary nurse image bytes to Supabase Storage 'nurses' bucket
+      String finalImageUrl = nurse.imageUrl;
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        debugPrint(
+          "[NURSES_ADD] Uploading nurse profile image to Supabase Storage 'nurses' bucket...",
+        );
+        try {
+          final uploadedUrl = await SupabaseService.instance.uploadNurseImage(
+            imageBytes,
+            nurseId: nurse.id,
+          );
+          if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+            finalImageUrl = uploadedUrl;
+            debugPrint(
+              "[NURSES_ADD] Storage upload SUCCESS: URL=$finalImageUrl",
+            );
+          }
+        } catch (imgErr) {
+          debugPrint("[NURSES_ADD] Storage upload error: $imgErr");
+        }
+      }
+
+      final String cleanNum = nurse.id.replaceAll(RegExp(r'[^0-9]'), '');
+      final String dbId = cleanNum.isNotEmpty
+          ? cleanNum
+          : (DateTime.now().millisecondsSinceEpoch % 2147483647).toString();
+
+      // 2. Prepare exact clean payload matching public.nurses schema: id, name, specialty, hospital, image_url
+      final Map<String, dynamic> nursePayload = {
+        'id': dbId,
+        'name': nurse.name.trim(),
+        'specialty': nurse.specialty.isNotEmpty
+            ? nurse.specialty.trim()
+            : 'Kalkaaliso',
+        'role': nurse.specialty.isNotEmpty ? nurse.specialty.trim() : 'Kalkaaliso',
+        'fee': nurse.fee,
+        'visit_fee': nurse.fee,
+        'discount_fee': nurse.discountFee,
+        'hospital': 'Nasiib Hospital',
+        'image_url': finalImageUrl,
+      };
+
+      debugPrint(
+        "[NURSES_ADD] Executing DB INSERT into public.nurses table with payload: $nursePayload",
+      );
+
+      bool insertSuccess = false;
+
+      // Attempt 1: Standard insert into public.nurses table
+      try {
+        await client.from('nurses').insert(nursePayload);
+        insertSuccess = true;
+        lastNurseError = null;
+        debugPrint(
+          "[NURSES_ADD] DB INSERT into public.nurses SUCCEEDED for nurse ID=$dbId!",
+        );
+      } catch (e1) {
+        debugPrint("[NURSES_ADD] Primary insert error: $e1");
+        if (e1 is PostgrestException) {
+          lastNurseError =
+              "[Code: ${e1.code}] ${e1.message} ${e1.details ?? ''} ${e1.hint ?? ''}";
+        } else {
+          lastNurseError = e1.toString();
+        }
+
+        // Attempt 2: Try without hospital column if column missing in Supabase schema
+        try {
+          final Map<String, dynamic> altPayload = Map<String, dynamic>.from(nursePayload);
+          altPayload.remove('hospital');
+          await client.from('nurses').insert(altPayload);
+          insertSuccess = true;
+          lastNurseError = null;
+          debugPrint(
+            "[NURSES_ADD] Alt DB INSERT into public.nurses SUCCEEDED!",
+          );
+        } catch (e2) {
+          debugPrint("[NURSES_ADD] Alt insert error: $e2");
+          if (e2 is PostgrestException) {
+            lastNurseError =
+                "[Code: ${e2.code}] ${e2.message} ${e2.details ?? ''} ${e2.hint ?? ''}";
+          }
+        }
+      }
+
+      if (insertSuccess) {
+        await fetchNurses();
+        return true;
+      } else {
+        return false;
+      }
+    } catch (e) {
+      lastNurseError = e.toString();
+      debugPrint("[NURSES_ADD] Exception creating nurse in Supabase DB: $e");
+      return false;
+    }
+  }
+
+  Future<void> deleteNurse(String id) async {
+    final NurseModel? targetNurse = _nurses.cast<NurseModel?>().firstWhere(
+      (n) => n?.id == id,
+      orElse: () => null,
+    );
+    final String targetName = targetNurse?.name.trim() ?? '';
+    final String cleanNum = id.replaceAll(RegExp(r'[^0-9]'), '');
+    final int? intId = int.tryParse(cleanNum);
+
+    // Remove from memory state immediately
+    _nurses.removeWhere(
+      (n) =>
+          n.id == id ||
+          (targetName.isNotEmpty &&
+              n.name.trim().toLowerCase() == targetName.toLowerCase()),
+    );
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client.from('nurses').delete().eq('id', id);
+        if (intId != null) {
+          await client.from('nurses').delete().eq('id', intId);
+        }
+        if (targetName.isNotEmpty) {
+          await client.from('nurses').delete().eq('name', targetName);
+        }
+        debugPrint(
+          "[NURSE_DELETE] Nurse '$targetName' (ID=$id) deleted from nurses DB.",
+        );
+      } catch (e) {
+        debugPrint("[NURSE_DELETE] Delete nurse error from Supabase: $e");
+      }
+    }
+
+    // Re-sync from Supabase DB to confirm state
+    await fetchNurses();
+    notifyListeners();
+  }
+
+  Future<bool> updateNurse(NurseModel nurse, {Uint8List? newImageBytes}) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) {
+      final index = _nurses.indexWhere((n) => n.id == nurse.id);
+      if (index != -1) {
+        _nurses[index] = nurse;
+        notifyListeners();
+      }
+      return true;
+    }
+
+    try {
+      String finalImageUrl = nurse.imageUrl;
+      if (newImageBytes != null && newImageBytes.isNotEmpty) {
+        final uploadedUrl = await SupabaseService.instance.uploadNurseImage(
+          newImageBytes,
+          nurseId: nurse.id,
+        );
+        if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+          finalImageUrl = uploadedUrl;
+        }
+      }
+
+      final updatedNurse = nurse.copyWith(imageUrl: finalImageUrl);
+
+      final Map<String, dynamic> nursePayload = {
+        'name': updatedNurse.name,
+        'specialty': updatedNurse.specialty,
+        'role': updatedNurse.specialty,
+        'fee': updatedNurse.fee,
+        'visit_fee': updatedNurse.fee,
+        'discount_fee': updatedNurse.discountFee,
+        'image_url': finalImageUrl,
+      };
+
+      try {
+        await client.from('nurses').update(nursePayload).eq('id', updatedNurse.id);
+      } catch (e1) {
+        debugPrint("[NURSES_UPDATE] Primary update notice: $e1");
+        final Map<String, dynamic> altPayload = Map<String, dynamic>.from(nursePayload);
+        altPayload.remove('visit_fee');
+        altPayload.remove('role');
+        try {
+          await client.from('nurses').update(altPayload).eq('id', updatedNurse.id);
+        } catch (e2) {
+          debugPrint("[NURSES_UPDATE] Alt update notice: $e2");
+        }
+      }
+
+      final index = _nurses.indexWhere((n) => n.id == updatedNurse.id);
+      if (index != -1) {
+        _nurses[index] = updatedNurse;
+      } else {
+        _nurses.add(updatedNurse);
+      }
+
+      await fetchNurses();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("[NURSES_UPDATE] Update nurse error: $e");
+      return false;
+    }
+  }
+
+  // Appointments List (Populated dynamically from Supabase DB)
+  final List<AppointmentModel> _appointments = [];
+
+  // Medicines List (Populated dynamically from Supabase DB)
+  final List<MedicineModel> _medicines = [];
+
+  // Shopping Cart List
+  final List<CartItemModel> _cartItems = [];
+
+  // Temporary Draft Booking
+  AppointmentModel? currentDraftBooking;
+
+  // Notifications List (Populated dynamically from Supabase DB)
+  final List<Map<String, dynamic>> _notifications = [];
+
+  List<Map<String, dynamic>> _dbPatients = [];
+  List<Map<String, dynamic>> get dbPatients => _dbPatients;
+
+  final Map<String, bool> _patientsTyping = {};
+  bool isPatientTyping(String patientId) => _patientsTyping[patientId] ?? false;
+  bool _hasUnreadNotification = true;
+  bool _pushNotificationsEnabled = true;
+
+  // Chat Messages List
+  final List<Map<String, dynamic>> _chatMessages = [];
+  List<Map<String, dynamic>> get chatMessages => _chatMessages;
+
+  // Recycle Bin storage lists
+  final List<DoctorModel> _deletedDoctors = [];
+  final List<MedicineModel> _deletedMedicines = [];
+  final List<AppointmentModel> _deletedAppointments = [];
+
+  List<DoctorModel> get deletedDoctors => _deletedDoctors;
+  List<MedicineModel> get deletedMedicines => _deletedMedicines;
+  List<AppointmentModel> get deletedAppointments => _deletedAppointments;
+
+  // Getters
+  List<Map<String, dynamic>> get notifications => _notifications;
+  bool get hasUnreadNotification =>
+      _hasUnreadNotification && _pushNotificationsEnabled;
+  bool get pushNotificationsEnabled => _pushNotificationsEnabled;
+
+  void setPushNotificationsEnabled(bool enabled) {
+    _pushNotificationsEnabled = enabled;
+    notifyListeners();
+  }
+
+  Future<void> markNotificationsAsRead() async {
+    _hasUnreadNotification = false;
+    final String nowIso = DateTime.now().toUtc().toIso8601String();
+    for (var n in _notifications) {
+      n['isRead'] = true;
+    }
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_read_notification_time_v1', nowIso);
+      await prefs.setStringList(
+        'read_notification_ids_v1',
+        _notifications.map((n) => n['id'].toString()).toList(),
+      );
+    } catch (e) {
+      debugPrint("[NOTIFICATIONS] Error saving notification read state: $e");
+    }
+  }
+
+  Future<void> loadNotificationsFromSupabase() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        final List<dynamic> response = await client
+            .from('notifications')
+            .select('*')
+            .order('created_at', ascending: false);
+
+        final prefs = await SharedPreferences.getInstance();
+        final String? lastReadTimeStr = prefs.getString('last_read_notification_time_v1');
+        final List<String> readIds = prefs.getStringList('read_notification_ids_v1') ?? [];
+        final DateTime? lastReadTime = lastReadTimeStr != null ? DateTime.tryParse(lastReadTimeStr) : null;
+
+        _notifications.clear();
+        final Set<String> seenIds = {};
+
+        for (var item in response) {
+          final String id = item['id'].toString();
+          if (seenIds.contains(id)) continue;
+          seenIds.add(id);
+
+          final String createdAtStr = item['created_at']?.toString() ?? '';
+          final DateTime? createdAt = DateTime.tryParse(createdAtStr);
+
+          bool isRead = readIds.contains(id);
+          if (!isRead && lastReadTime != null && createdAt != null) {
+            if (createdAt.isBefore(lastReadTime) || createdAt.isAtSameMomentAs(lastReadTime)) {
+              isRead = true;
+            }
+          }
+
+          _notifications.add({
+            'id': id,
+            'title': item['title'] ?? '',
+            'body': item['body'] ?? '',
+            'time': createdAtStr.isNotEmpty ? createdAtStr.split('T').first : 'Just now',
+            'created_at': createdAtStr,
+            'sender': item['sender_label'] ?? item['sender'] ?? 'Nasiib Hospital',
+            'isRead': isRead,
+          });
+        }
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint("[NOTIFICATIONS] Error fetching notifications from Supabase: $e");
+    }
+  }
+
+  int get unreadNotificationCount {
+    final Set<String> unreadUniqueIds = {};
+    for (var n in _notifications) {
+      final isRead = n['isRead'];
+      final bool unread = isRead == false || isRead == 0 || isRead == 'false';
+      if (unread) {
+        unreadUniqueIds.add(n['id'].toString());
+      }
+    }
+    return unreadUniqueIds.length;
+  }
+
+  Future<void> sendAnnouncement(String title, String body) async {
+    final id = 'not_${DateTime.now().millisecondsSinceEpoch}';
+    if (!_notifications.any((n) => n['id'].toString() == id)) {
+      _notifications.insert(0, {
+        'id': id,
+        'title': title,
+        'body': body,
+        'time': 'Just now',
+        'sender': 'Nasiib Hospital',
+        'isRead': false,
+      });
+    }
+    if (_pushNotificationsEnabled) {
+      _hasUnreadNotification = true;
+    }
+    notifyListeners();
+
+    // 1. Await Insert to Supabase public.notifications
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      final String nowIso = DateTime.now().toIso8601String();
+      try {
+        await client.from('notifications').insert({
+          'id': id,
+          'title': title,
+          'body': body,
+          'sender': 'Nasiib Hospital',
+          'sender_label': 'Nasiib Hospital',
+          'target_user_id': 'all',
+          'created_at': nowIso,
+        });
+        debugPrint("[SUPABASE_NOTIFICATIONS] Announcement successfully saved to Supabase notifications table.");
+      } catch (e) {
+        debugPrint("[SUPABASE_NOTIFICATIONS] Failed to save announcement to Supabase: $e");
+      }
+    }
+  }
+
+  bool get isLoggedIn => _isLoggedIn;
+  bool get isAdminMode => _isAdminMode;
+  int get currentPatientNavIndex => _currentPatientNavIndex;
+
+  UserModel? get currentUser => _currentUser;
+  List<DoctorModel> get doctors => _doctors;
+  List<AppointmentModel> get appointments => _appointments;
+  List<MedicineModel> get medicines => _medicines;
+  List<CartItemModel> get cartItems => _cartItems;
+
+  int get cartCount => _cartItems.fold(0, (sum, item) => sum + item.quantity);
+  double get cartSubtotal =>
+      _cartItems.fold(0.0, (sum, item) => sum + item.totalPrice);
+
+  // Cart Actions
+  void addToCart(MedicineModel medicine, int quantity) {
+    final index = _cartItems.indexWhere(
+      (item) => item.medicine.id == medicine.id,
+    );
+    if (index != -1) {
+      _cartItems[index].quantity += quantity;
+    } else {
+      _cartItems.add(CartItemModel(medicine: medicine, quantity: quantity));
+    }
+    _saveCartToPrefs();
+    notifyListeners();
+  }
+
+  void removeFromCart(String medicineId) {
+    _cartItems.removeWhere((item) => item.medicine.id == medicineId);
+    _saveCartToPrefs();
+    notifyListeners();
+  }
+
+  void updateCartQuantity(String medicineId, int quantity) {
+    final index = _cartItems.indexWhere(
+      (item) => item.medicine.id == medicineId,
+    );
+    if (index != -1) {
+      if (quantity <= 0) {
+        _cartItems.removeAt(index);
+      } else {
+        _cartItems[index].quantity = quantity;
+      }
+      _saveCartToPrefs();
+      notifyListeners();
+    }
+  }
+
+  Future<void> clearCart() async {
+    // 1. Wipe in-memory immediately so UI updates right away.
+    _cartItems.clear();
+    notifyListeners();
+
+    // 2. Wipe ALL possible persistent storage keys asynchronously.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('permanent_cart_items_v1');
+      await prefs.remove('cart_items');
+      await prefs.remove('cart');
+      // Also write an empty list under the primary key to prevent stale
+      // data from being re-read on next cold start.
+      await prefs.setString('permanent_cart_items_v1', '[]');
+      debugPrint('[CART] clearCart() — storage wiped');
+    } catch (e) {
+      debugPrint('[CART] clearCart() storage error: $e');
+    }
+  }
+
+  // Navigation & General Actions
+  void setPatientNavIndex(int index) {
+    _currentPatientNavIndex = index;
+    if (index == 0) {
+      _selectedSpecialty =
+          'All'; // Always show all doctors when returning to Home!
+    }
+    notifyListeners();
+  }
+
+  void setSelectedSpecialty(String specialty) {
+    _selectedSpecialty = specialty;
+    notifyListeners();
+  }
+
+  void resetHomeFilters() {
+    _selectedSpecialty = 'All';
+    notifyListeners();
+  }
+
+  void toggleAdminMode(bool enable) {
+    _isAdminMode = enable;
+    notifyListeners();
+  }
+
+  // Alias used by web admin portal
+  void setAdminMode(bool enable) => toggleAdminMode(enable);
+
+  Future<void> logout() async {
+    _currentUser = null;
+    _isLoggedIn = false;
+    _appointments.clear();
+    _cartItems.clear();
+    _notifications.clear();
+    _chatMessages.clear();
+    _currentPatientNavIndex = 0;
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      debugPrint("Firebase signOut error: $e");
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      await prefs.setBool('is_logged_in_v1', false);
+    } catch (e) {
+      debugPrint("Prefs clear error: $e");
+    }
+    notifyListeners();
+  }
+
+  Future<void> deleteUserAccount(String phoneNumber) async {
+    final String cleanPhone = phoneNumber.replaceAll(RegExp(r'[\s\-()]+'), '');
+    final String fullE164 = cleanPhone.startsWith('+') ? cleanPhone : '+252${cleanPhone.replaceAll(RegExp(r'^252|^0'), '')}';
+    final String digitsOnly = fullE164.replaceAll('+252', '');
+    final possibleFormats = [fullE164, digitsOnly, '0$digitsOnly', _currentUser?.id ?? ''];
+
+    // 1. Permanently delete from Firebase Firestore & Auth
+    try {
+      for (final id in possibleFormats) {
+        if (id.isNotEmpty) {
+          await FirebaseFirestore.instance.collection('users').doc(id).delete();
+        }
+      }
+      final q1 = await FirebaseFirestore.instance
+          .collection('users')
+          .where('phoneNumber', whereIn: possibleFormats.where((f) => f.isNotEmpty).toList())
+          .get();
+      for (final doc in q1.docs) {
+        await doc.reference.delete();
+      }
+      final q2 = await FirebaseFirestore.instance
+          .collection('users')
+          .where('phone_number', whereIn: possibleFormats.where((f) => f.isNotEmpty).toList())
+          .get();
+      for (final doc in q2.docs) {
+        await doc.reference.delete();
+      }
+
+      final currentFbUser = FirebaseAuth.instance.currentUser;
+      if (currentFbUser != null) {
+        await currentFbUser.delete();
+      }
+      debugPrint("[FIRESTORE_AUTH] Permanently deleted user $phoneNumber from Firebase Auth & Firestore.");
+    } catch (e) {
+      debugPrint("[FIRESTORE_AUTH] Delete user error: $e");
+    }
+
+    // 2. Permanently delete from Supabase patients table & Storage
+    try {
+      await SupabaseService.instance.deleteUserData(fullE164, userId: _currentUser?.id);
+      debugPrint("[SUPABASE] Permanently deleted user $phoneNumber from Supabase patients.");
+    } catch (e) {
+      debugPrint("[SUPABASE] Delete user error: $e");
+    }
+
+    // 3. Clear local state if current user
+    if (_currentUser?.phoneNumber == fullE164 || _currentUser?.phoneNumber == phoneNumber) {
+      await logout();
+    }
+  }
+
+  void setLoggedIn(bool loggedIn) {
+    _isLoggedIn = loggedIn;
+    if (loggedIn) {
+      _currentPatientNavIndex = 0;
+      loadPatientProfileFromSupabase();
+    } else {
+      logout();
+    }
+    notifyListeners();
+  }
+
+  Future<void> loadPatientProfileFromSupabase([String? phone]) async {
+    try {
+      final client = SupabaseService.instance.client;
+      final fbUser = FirebaseAuth.instance.currentUser;
+      final uid = fbUser?.uid ?? _currentUser?.id;
+
+      if (client != null && SupabaseService.instance.isInitialized) {
+        Map<String, dynamic>? data;
+        if (uid != null && uid.isNotEmpty) {
+          try {
+            data = await client
+                .from('patients')
+                .select('*')
+                .or('id.eq."$uid",user_id.eq."$uid"')
+                .maybeSingle();
+          } catch (e) {
+            debugPrint("[SUPABASE_PROFILE] ID filter notice: $e");
+          }
+        }
+
+        if (data == null) {
+          final targetPhone = phone ?? _currentUser?.phoneNumber ?? fbUser?.phoneNumber;
+          if (targetPhone != null && targetPhone.isNotEmpty) {
+            final digits = targetPhone.replaceAll(RegExp(r'\D'), '');
+            final possible = [targetPhone, digits, '0$digits', '252$digits', '+252$digits'];
+            try {
+              data = await client
+                  .from('patients')
+                  .select('*')
+                  .inFilter('phone_number', possible)
+                  .maybeSingle();
+            } catch (e) {
+              debugPrint("[SUPABASE_PROFILE] phone_number inFilter notice: $e");
+            }
+          }
+        }
+
+        if (data != null) {
+          final fetchedName = (data['full_name'] as String?) ?? (data['name'] as String?) ?? _currentUser?.fullName ?? 'Patient';
+          final fetchedPhone = (data['phone_number'] as String?) ?? (data['phone'] as String?) ?? phone ?? _currentUser?.phoneNumber ?? '';
+          final fetchedEmail = (data['email'] as String?) ?? _currentUser?.email ?? '';
+          final fetchedAvatar = (data['avatar_url'] as String?) ?? _currentUser?.avatarUrl ?? '';
+
+          _currentUser = UserModel(
+            id: uid ?? (data['id'] as String? ?? 'usr_${DateTime.now().millisecondsSinceEpoch}'),
+            fullName: fetchedName,
+            phoneNumber: fetchedPhone,
+            email: fetchedEmail,
+            avatarUrl: fetchedAvatar,
+            createdAt: _currentUser?.createdAt ?? DateTime.now(),
+          );
+          _isLoggedIn = true;
+          _saveProfileToPrefs();
+          await loadNotificationsFromSupabase();
+          notifyListeners();
+          debugPrint("[SUPABASE_PROFILE] Successfully loaded patient full_name: $fetchedName");
+        }
+      }
+    } catch (e) {
+      debugPrint("[SUPABASE_PROFILE] Error loading patient profile: $e");
+    }
+  }
+
+  void registerUser({
+    required String name,
+    required String phone,
+    required String email,
+  }) async {
+    final now = DateTime.now();
+    final firebaseUid = FirebaseAuth.instance.currentUser?.uid;
+    final userId = firebaseUid ?? 'usr_${now.millisecondsSinceEpoch}';
+
+    // Clear previous user's cached state, appointments, cart, and avatar
+    _appointments.clear();
+    _cartItems.clear();
+    _notifications.clear();
+    _chatMessages.clear();
+
+    _currentUser = UserModel(
+      id: userId,
+      fullName: name,
+      phoneNumber: phone,
+      email: email,
+      avatarUrl: '', // Default empty avatar for new user
+      createdAt: now,
+    );
+    _isLoggedIn = true;
+    _saveProfileToPrefs();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_read_notification_time_v1', now.toUtc().toIso8601String());
+    } catch (e) {
+      debugPrint("Error setting initial notification timestamp: $e");
+    }
+
+    notifyListeners();
+
+    // Pure Supabase Profile Creation in public.patients table
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        await client.from('patients').upsert({
+          'id': userId,
+          'user_id': userId,
+          'full_name': name,
+          'phone_number': phone,
+          'email': email,
+          'created_at': now.toIso8601String(),
+        });
+        debugPrint("[SUPABASE_PATIENTS] Registered patient profile exclusively in Supabase patients table.");
+      }
+    } catch (e) {
+      debugPrint("Supabase registerUser notice: $e");
+    }
+  }
+
+  Future<bool> updateProfile({
+    String? fullName,
+    String? phoneNumber,
+    String? email,
+    String? avatarUrl,
+    Uint8List? avatarBytes,
+  }) async {
+    if (_currentUser == null) return false;
+
+    String finalAvatarUrl = avatarUrl ?? _currentUser!.avatarUrl;
+    if (avatarBytes != null && avatarBytes.isNotEmpty) {
+      debugPrint(
+        "[AVATAR_UPLOAD] Uploading user profile avatar to Supabase Storage...",
+      );
+      final uploadedUrl = await SupabaseService.instance.uploadUserAvatar(
+        avatarBytes,
+        userId: _currentUser?.id,
+      );
+      if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+        finalAvatarUrl = uploadedUrl;
+      } else {
+        // Fallback: Convert to data URL if remote upload fails completely
+        finalAvatarUrl = 'data:image/png;base64,${base64Encode(avatarBytes)}';
+      }
+    }
+
+    final newFullName = fullName?.trim() ?? _currentUser!.fullName;
+    final newPhone = phoneNumber?.trim() ?? _currentUser!.phoneNumber;
+    final newEmail = email?.trim() ?? _currentUser!.email;
+
+    _currentUser = _currentUser!.copyWith(
+      fullName: newFullName,
+      phoneNumber: newPhone,
+      email: newEmail,
+      avatarUrl: finalAvatarUrl,
+    );
+    _saveProfileToPrefs();
+    notifyListeners();
+
+    // 1. Execute Supabase update on public.patients
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client.from('patients').upsert({
+          'id': _currentUser!.id,
+          'user_id': _currentUser!.id,
+          'full_name': newFullName,
+          'phone_number': newPhone,
+          'email': newEmail,
+          'avatar_url': finalAvatarUrl,
+        }).select().timeout(const Duration(seconds: 5));
+        debugPrint("[SUPABASE_PROFILE] Updated patient in Supabase public.patients.");
+      } catch (e) {
+        debugPrint("[SUPABASE_PROFILE] Supabase profile sync notice: $e");
+      }
+    }
+
+    return true;
+  }
+
+  void startDraftBooking(DoctorModel doctor) {
+    currentDraftBooking = AppointmentModel(
+      id: 'apt_${DateTime.now().millisecondsSinceEpoch}',
+      referenceId: '#APT${(10000 + DateTime.now().millisecond * 7).toString()}',
+      doctorId: doctor.id,
+      doctorName: doctor.name,
+      doctorSpecialty: doctor.specialty,
+      doctorImageUrl: doctor.imageUrl,
+      hospitalName: doctor.hospital,
+      date: 'Monday, Aug 10, 2026',
+      time: '09:00 AM',
+      appointmentType: 'New Patient',
+      patientName: _currentUser?.fullName ?? '',
+      patientPhone: _currentUser?.phoneNumber ?? '',
+      patientAge: 24,
+      patientGender: 'Male',
+      patientImageUrl: (_currentUser?.avatarUrl != null && _currentUser!.avatarUrl.trim().isNotEmpty)
+          ? _currentUser!.avatarUrl.trim()
+          : null,
+      reasonForVisit: '',
+      paymentMethod: 'EVC Plus',
+      amount: doctor.activePrice,
+      queueNumber: Random().nextInt(40) + 1,
+      status: 'Upcoming',
+      createdAt: DateTime.now().toIso8601String(),
+    );
+    notifyListeners();
+  }
+
+  void updateDraftBooking({
+    String? date,
+    String? time,
+    String? appointmentType,
+    String? reasonForVisit,
+    String? paymentMethod,
+    String? patientName,
+    String? patientPhone,
+    int? patientAge,
+    String? patientGender,
+    String? patientImageUrl,
+  }) {
+    if (currentDraftBooking == null) return;
+    final String effectiveImg = (patientImageUrl != null && patientImageUrl.trim().isNotEmpty)
+        ? patientImageUrl.trim()
+        : ((currentDraftBooking!.patientImageUrl != null && currentDraftBooking!.patientImageUrl!.trim().isNotEmpty)
+            ? currentDraftBooking!.patientImageUrl!.trim()
+            : ((_currentUser?.avatarUrl != null && _currentUser!.avatarUrl.trim().isNotEmpty)
+                ? _currentUser!.avatarUrl.trim()
+                : ''));
+
+    currentDraftBooking = AppointmentModel(
+      id: currentDraftBooking!.id,
+      referenceId: currentDraftBooking!.referenceId,
+      doctorId: currentDraftBooking!.doctorId,
+      doctorName: currentDraftBooking!.doctorName,
+      doctorSpecialty: currentDraftBooking!.doctorSpecialty,
+      doctorImageUrl: currentDraftBooking!.doctorImageUrl,
+      hospitalName: currentDraftBooking!.hospitalName,
+      date: date ?? currentDraftBooking!.date,
+      time: time ?? currentDraftBooking!.time,
+      appointmentType: appointmentType ?? currentDraftBooking!.appointmentType,
+      patientName: (patientName != null && patientName.trim().isNotEmpty)
+          ? patientName.trim()
+          : currentDraftBooking!.patientName,
+      patientPhone: (patientPhone != null && patientPhone.trim().isNotEmpty)
+          ? patientPhone.trim()
+          : currentDraftBooking!.patientPhone,
+      patientAge: patientAge ?? currentDraftBooking!.patientAge,
+      patientGender: patientGender ?? currentDraftBooking!.patientGender,
+      patientImageUrl: effectiveImg.isNotEmpty ? effectiveImg : null,
+      reasonForVisit: reasonForVisit ?? currentDraftBooking!.reasonForVisit,
+      paymentMethod: paymentMethod ?? currentDraftBooking!.paymentMethod,
+      amount: currentDraftBooking!.amount,
+      queueNumber: currentDraftBooking!.queueNumber,
+      status: currentDraftBooking!.status,
+      createdAt: currentDraftBooking!.createdAt,
+    );
+    notifyListeners();
+  }
+
+  void confirmCurrentBooking() {
+    if (currentDraftBooking != null) {
+      _appointments.insert(0, currentDraftBooking!);
+      notifyListeners();
+
+      // Insert to Supabase
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('appointments')
+            .insert({
+              'id': currentDraftBooking!.id,
+              'reference_id': currentDraftBooking!.referenceId,
+              'doctor_id': currentDraftBooking!.doctorId,
+              'doctor_name': currentDraftBooking!.doctorName,
+              'doctor_specialty': currentDraftBooking!.doctorSpecialty,
+              'patient_name': currentDraftBooking!.patientName,
+              'patient_phone': currentDraftBooking!.patientPhone,
+              'patient_age': currentDraftBooking!.patientAge,
+              'patient_gender': currentDraftBooking!.patientGender,
+              'date': currentDraftBooking!.date,
+              'time': currentDraftBooking!.time,
+              'status': 'Confirmed',
+              'reason': currentDraftBooking!.reasonForVisit,
+              'payment_method': currentDraftBooking!.paymentMethod,
+              'amount': currentDraftBooking!.amount,
+              'queue_number': currentDraftBooking!.queueNumber,
+            })
+            .then((_) => debugPrint("Booking saved to Supabase"))
+            .catchError(
+              (e) => debugPrint("Failed to save booking to Supabase: $e"),
+            );
+      }
+    }
+  }
+
+  // Admin CRUD
+  Future<bool> addDoctor(DoctorModel doctor, {Uint8List? imageBytes}) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) {
+      debugPrint(
+        "[DOCTORS_ADD] Error: Supabase client offline or uninitialized.",
+      );
+      throw Exception("Supabase client is not initialized.");
+    }
+
+    try {
+      // 1. Upload binary image to Storage bucket 'avatars'
+      String finalImageUrl = doctor.imageUrl;
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        debugPrint(
+          "[DOCTORS_ADD] Uploading binary image bytes to Supabase Storage bucket 'avatars'...",
+        );
+        final uploadedUrl = await SupabaseService.instance.uploadDoctorImage(
+          imageBytes,
+          doctorId: doctor.id.isNotEmpty
+              ? doctor.id
+              : '${DateTime.now().millisecondsSinceEpoch}',
+        );
+        if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+          finalImageUrl = uploadedUrl;
+          debugPrint("[DOCTORS_ADD] Upload success! Public URL: $finalImageUrl");
+        } else {
+          debugPrint(
+            "[DOCTORS_ADD] Storage upload returned null/empty URL.",
+          );
+          if (finalImageUrl.startsWith('data:image')) {
+            finalImageUrl = ''; // Never store Base64 in PostgreSQL!
+          }
+        }
+      } else if (finalImageUrl.startsWith('data:image')) {
+        finalImageUrl = '';
+      }
+
+      // 2. Prepare database payload matching public.doctors schema
+      final String cleanNum = doctor.id.replaceAll(RegExp(r'[^0-9]'), '');
+      final int? intId = cleanNum.isNotEmpty ? int.tryParse(cleanNum) : null;
+
+      final Map<String, dynamic> cleanPayload = {
+        'name': doctor.name,
+        'specialty': doctor.specialty,
+        'experience': doctor.experience,
+        'patients_count': doctor.patientsCount.isNotEmpty ? doctor.patientsCount : '0+',
+        'working_hours': doctor.workingHours,
+        'about': doctor.about,
+        'image_url': finalImageUrl,
+        'is_available': doctor.isAvailable,
+        'is_online': doctor.isOnline,
+        'consultation_fee': doctor.consultationFee,
+        'discount_fee': doctor.discountFee,
+      };
+
+      if (doctor.id.isNotEmpty) {
+        cleanPayload['id'] = doctor.id;
+      }
+
+      debugPrint(
+        "[DOCTORS_ADD] Sending database payload to Supabase doctors table: $cleanPayload",
+      );
+
+      dynamic insertedRow;
+      try {
+        final res = await client.from('doctors').insert(cleanPayload).select();
+        if (res.isNotEmpty) {
+          insertedRow = res.first;
+        }
+        debugPrint("[DOCTORS_ADD] DB insert succeeded! Returned row: $insertedRow");
+      } catch (insertErr) {
+        debugPrint(
+          "[DOCTORS_ADD] Primary insert notice: $insertErr. Trying auto-ID payload...",
+        );
+        final Map<String, dynamic> autoIdPayload = Map<String, dynamic>.from(cleanPayload);
+        autoIdPayload.remove('id');
+
+        try {
+          final res = await client.from('doctors').insert(autoIdPayload).select();
+          if (res.isNotEmpty) {
+            insertedRow = res.first;
+          }
+          debugPrint("[DOCTORS_ADD] Auto-ID DB insert succeeded! Returned row: $insertedRow");
+        } catch (retryErr) {
+          debugPrint("[DOCTORS_ADD] CRITICAL INSERT ERROR: $retryErr");
+          rethrow;
+        }
+      }
+
+      // 3. ONLY AFTER Successful DB Insert: Update local state & notify listeners
+      DoctorModel confirmedDoc;
+      if (insertedRow != null) {
+        confirmedDoc = DoctorModel.fromJson(Map<String, dynamic>.from(insertedRow));
+      } else {
+        confirmedDoc = doctor.copyWith(imageUrl: finalImageUrl);
+      }
+
+      _doctors.removeWhere((d) => d.id == confirmedDoc.id);
+      _doctors.insert(0, confirmedDoc);
+
+      await fetchDoctors();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("[DOCTORS_ADD] Add doctor failed: $e");
+      rethrow;
+    }
+  }
+
+  Future<bool> updateDoctor(
+    DoctorModel doctor, {
+    Uint8List? newImageBytes,
+  }) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return false;
+
+    try {
+      String finalImageUrl = doctor.imageUrl;
+      if (newImageBytes != null && newImageBytes.isNotEmpty) {
+        final uploadedUrl = await SupabaseService.instance.uploadDoctorImage(
+          newImageBytes,
+          doctorId: doctor.id,
+        );
+        if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+          finalImageUrl = uploadedUrl;
+        }
+      } else if (finalImageUrl.startsWith('data:image')) {
+        finalImageUrl = '';
+      }
+
+      final Map<String, dynamic> updatePayload = {
+        'name': doctor.name,
+        'specialty': doctor.specialty,
+        'experience': doctor.experience,
+        'patients_count': doctor.patientsCount.isNotEmpty ? doctor.patientsCount : '0+',
+        'working_hours': doctor.workingHours,
+        'about': doctor.about,
+        'image_url': finalImageUrl,
+        'is_available': doctor.isAvailable,
+        'is_online': doctor.isOnline,
+        'consultation_fee': doctor.consultationFee,
+        'discount_fee': doctor.discountFee,
+      };
+
+      try {
+        await client.from('doctors').update(updatePayload).eq('id', doctor.id);
+        debugPrint(
+          "[DOCTORS_UPDATE] Update succeeded for doctor ID=${doctor.id}",
+        );
+      } catch (e1) {
+        debugPrint("[DOCTORS_UPDATE] Update error: $e1");
+      }
+
+      await fetchDoctors();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("Error updating order status: $e");
+      return false;
+    }
+  }
+
+  RealtimeChannel? subscribeToOrderTracking(String orderId) {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return null;
+
+    final String channelName = 'order_tracking_$orderId';
+    debugPrint("[SUPABASE_REALTIME] Subscribing to order tracking channel: $channelName");
+
+    final channel = client.channel(channelName);
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.update,
+      schema: 'public',
+      table: 'orders',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.eq,
+        column: 'id',
+        value: orderId,
+      ),
+      callback: (payload) {
+        print("🟢 REALTIME ORDER UPDATE RECEIVED: ${payload.newRecord}");
+        debugPrint("🟢 [SUPABASE_REALTIME] REALTIME ORDER UPDATE RECEIVED: ${payload.newRecord}");
+        final newRecord = payload.newRecord;
+        if (newRecord.isNotEmpty) {
+          final String id = newRecord['id'].toString();
+          final idx = _orders.indexWhere((o) => o['id'].toString() == id);
+          if (idx != -1) {
+            _orders[idx] = Map<String, dynamic>.from(newRecord);
+          } else {
+            _orders.insert(0, Map<String, dynamic>.from(newRecord));
+          }
+          notifyListeners();
+        }
+      },
+    ).subscribe();
+
+    return channel;
+  }
+
+  Future<void> deleteDoctor(String id, {bool permanently = true}) async {
+    _doctors.removeWhere((d) => d.id == id);
+    _nurses.removeWhere((n) => n.id == id);
+    _deletedDoctors.removeWhere((d) => d.id == id);
+    _customDoctors.removeWhere((d) => d.id == id);
+    await _saveCustomDoctorsToPrefs();
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final cleanId = id.replaceAll('doc_', '');
+        final parsedId = int.tryParse(cleanId);
+        if (parsedId != null) {
+          await client.from('doctors').delete().eq('id', parsedId);
+          debugPrint(
+            "Permanently deleted doctor int ID $parsedId from Supabase",
+          );
+        }
+        await client.from('doctors').delete().eq('id', id);
+        debugPrint("Permanently deleted doctor string ID $id from Supabase");
+      } catch (e) {
+        debugPrint("Delete doctor error: $e");
+      }
+    }
+    notifyListeners();
+  }
+
+  void restoreDoctor(DoctorModel doctor) {
+    _deletedDoctors.removeWhere((d) => d.id == doctor.id);
+    addDoctor(doctor);
+  }
+
+  void deleteDoctorPermanentlyFromBin(String id) {
+    _deletedDoctors.removeWhere((d) => d.id == id);
+    notifyListeners();
+  }
+
+  void updateAppointmentStatus(String id, String newStatus) {
+    final idx = _appointments.indexWhere((a) => a.id == id);
+    if (idx != -1) {
+      final old = _appointments[idx];
+      _appointments[idx] = AppointmentModel(
+        id: old.id,
+        referenceId: old.referenceId,
+        doctorId: old.doctorId,
+        doctorName: old.doctorName,
+        doctorSpecialty: old.doctorSpecialty,
+        doctorImageUrl: old.doctorImageUrl,
+        hospitalName: old.hospitalName,
+        date: old.date,
+        time: old.time,
+        appointmentType: old.appointmentType,
+        patientName: old.patientName,
+        patientPhone: old.patientPhone,
+        patientAge: old.patientAge,
+        patientGender: old.patientGender,
+        reasonForVisit: old.reasonForVisit,
+        paymentMethod: old.paymentMethod,
+        amount: old.amount,
+        queueNumber: old.queueNumber,
+        status: newStatus,
+        createdAt: old.createdAt,
+      );
+      notifyListeners();
+    }
+  }
+
+  Future<bool> addAppointment(AppointmentModel appointment) async {
+    final String activeUserImg = (currentUser?.avatarUrl != null && currentUser!.avatarUrl.trim().isNotEmpty)
+        ? currentUser!.avatarUrl.trim()
+        : '';
+
+    final String finalPatientImg = (appointment.patientImageUrl != null && appointment.patientImageUrl!.trim().isNotEmpty)
+        ? appointment.patientImageUrl!.trim()
+        : activeUserImg;
+
+    appointment = appointment.copyWith(patientImageUrl: finalPatientImg);
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      final String safeRef = (appointment.referenceId.isNotEmpty && appointment.referenceId != '#APT0')
+          ? appointment.referenceId
+          : '#APT${(10000 + Random().nextInt(89999))}';
+
+      // Exactly ONE single Supabase insert call with exact patient details
+      final Map<String, dynamic> payload = {
+        'reference_id': safeRef,
+        'doctor_id': appointment.doctorId,
+        'doctor_name': appointment.doctorName,
+        'doctor_specialty': appointment.doctorSpecialty,
+        'patient_name': appointment.patientName,
+        'patient_phone': appointment.patientPhone,
+        'patient_age': appointment.patientAge,
+        'patient_gender': appointment.patientGender,
+        'patient_image': finalPatientImg,
+        'patient_avatar_url': finalPatientImg,
+        'date': appointment.date,
+        'time': appointment.time,
+        'appointment_type': appointment.appointmentType,
+        'status': appointment.status,
+        'reason': appointment.reasonForVisit,
+        'payment_method': appointment.paymentMethod,
+        'amount': appointment.amount > 0 ? appointment.amount : 15.0,
+        'queue_number': appointment.queueNumber,
+        'created_at': appointment.createdAt,
+      };
+
+      try {
+        final res = await client.from('appointments').insert(payload).select().maybeSingle();
+        if (res != null && res['id'] != null) {
+          appointment = appointment.copyWith(id: res['id'].toString());
+        }
+        debugPrint("[SUPABASE_SUCCESS] Appointment inserted into public.appointments successfully!");
+      } catch (err) {
+        debugPrint("[SUPABASE_ERROR] Error inserting appointment: $err");
+      }
+    }
+
+    // Deduplicate in-memory list so duplicate twin records are never added locally
+    _appointments.removeWhere((a) =>
+        a.id == appointment.id ||
+        (a.referenceId.isNotEmpty && a.referenceId == appointment.referenceId));
+    _appointments.insert(0, appointment);
+    notifyListeners();
+    return true;
+  }
+
+  void addMedicine(MedicineModel medicine) {
+    _medicines.insert(0, medicine);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client
+          .from('medicines')
+          .insert({
+            'id': medicine.id,
+            'title': medicine.title,
+            'category': medicine.category,
+            'sku': medicine.sku,
+            'price': medicine.price,
+            'original_price': medicine.originalPrice,
+            'image_url': medicine.imageUrl,
+            'description': medicine.description,
+          })
+          .then((_) => debugPrint("Medicine saved to Supabase"))
+          .catchError((e) => debugPrint("Failed to save medicine: $e"));
+    }
+  }
+
+  void toggleFavoriteMedicine(String id) {
+    final idx = _medicines.indexWhere((m) => m.id == id);
+    if (idx != -1) {
+      _medicines[idx] = _medicines[idx].copyWith(
+        isFavorite: !_medicines[idx].isFavorite,
+      );
+      notifyListeners();
+    }
+  }
+
+  void addOrUpdatePrescription(String appointmentId, String prescriptionText) {
+    final index = _appointments.indexWhere((apt) => apt.id == appointmentId);
+    if (index != -1) {
+      _appointments[index] = _appointments[index].copyWith(
+        prescription: prescriptionText,
+      );
+      notifyListeners();
+    }
+  }
+
+  void deleteMedicine(String id, {bool permanently = true}) {
+    _medicines.removeWhere((m) => m.id == id);
+    _deletedMedicines.removeWhere((m) => m.id == id);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      final cleanId = id.replaceAll('med_', '');
+      final parsedId = int.tryParse(cleanId);
+      if (parsedId != null) {
+        client
+            .from('medicines')
+            .delete()
+            .eq('id', parsedId)
+            .then(
+              (_) => debugPrint(
+                "Permanently deleted medicine int ID $parsedId from Supabase",
+              ),
+            )
+            .catchError((e) => debugPrint("Delete medicine error: $e"));
+      }
+      client
+          .from('medicines')
+          .delete()
+          .eq('id', id)
+          .then(
+            (_) => debugPrint(
+              "Permanently deleted medicine string ID $id from Supabase",
+            ),
+          )
+          .catchError((e) => debugPrint("Delete medicine error: $e"));
+    }
+  }
+
+  void restoreMedicine(MedicineModel medicine) {
+    _deletedMedicines.removeWhere((m) => m.id == medicine.id);
+    addMedicine(medicine);
+  }
+
+  void deleteMedicinePermanentlyFromBin(String id) {
+    _deletedMedicines.removeWhere((m) => m.id == id);
+    notifyListeners();
+  }
+
+  void updateMedicinePrice(String id, double price, double? originalPrice) {
+    final idx = _medicines.indexWhere((m) => m.id == id);
+    if (idx != -1) {
+      _medicines[idx] = _medicines[idx].copyWith(
+        price: price,
+        originalPrice: originalPrice,
+        clearOriginalPrice: originalPrice == null,
+      );
+      notifyListeners();
+    }
+  }
+
+  void updateMedicine(MedicineModel updated) {
+    final idx = _medicines.indexWhere((m) => m.id == updated.id);
+    if (idx != -1) {
+      _medicines[idx] = updated;
+      notifyListeners();
+
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('medicines')
+            .update({
+              'title': updated.title,
+              'category': updated.category,
+              'sku': updated.sku,
+              'price': updated.price,
+              'original_price': updated.originalPrice,
+              'image_url': updated.imageUrl,
+              'description': updated.description,
+            })
+            .eq('id', updated.id);
+      }
+    }
+  }
+
+  Future<void> deleteAppointment(String id) async {
+    _appointments.removeWhere((a) => a.id == id || a.referenceId == id);
+    _deletedAppointments.removeWhere((a) => a.id == id || a.referenceId == id);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client.from('appointments').delete().eq('id', id);
+        await client.from('appointments').delete().eq('reference_id', id);
+        final cleanId = id.replaceAll('apt_', '');
+        final parsedInt = int.tryParse(cleanId);
+        if (parsedInt != null) {
+          await client.from('appointments').delete().eq('id', parsedInt);
+        }
+        debugPrint("[SUPABASE_SUCCESS] Permanently deleted appointment $id from Supabase");
+      } catch (e) {
+        debugPrint("[SUPABASE_ERROR] Error deleting appointment from Supabase: $e");
+      }
+    }
+  }
+
+  void restoreAppointment(AppointmentModel appointment) {
+    _deletedAppointments.removeWhere((a) => a.id == appointment.id);
+    _appointments.insert(0, appointment);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      client.from('appointments').insert({
+        'id': appointment.id,
+        'reference_id': appointment.referenceId,
+        'doctor_id': appointment.doctorId,
+        'doctor_name': appointment.doctorName,
+        'doctor_specialty': appointment.doctorSpecialty,
+        'patient_name': appointment.patientName,
+        'patient_phone': appointment.patientPhone,
+        'patient_age': appointment.patientAge,
+        'patient_gender': appointment.patientGender,
+        'date': appointment.date,
+        'time': appointment.time,
+        'status': appointment.status,
+        'reason': appointment.reasonForVisit,
+        'payment_method': appointment.paymentMethod,
+        'amount': appointment.amount,
+        'queue_number': appointment.queueNumber,
+      });
+    }
+  }
+
+  void deleteAppointmentPermanentlyFromBin(String id) {
+    final index = _deletedAppointments.indexWhere((a) => a.id == id);
+    if (index != -1) {
+      final target = _deletedAppointments[index];
+      if (target.patientPhone.isNotEmpty) {
+        deleteUserAccount(target.patientPhone);
+      }
+      _deletedAppointments.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  String? _activeConversationId;
+  String? get activeConversationId => _activeConversationId;
+  RealtimeChannel? _realtimeSubscription;
+  final List<Map<String, dynamic>> _conversations = [];
+  List<Map<String, dynamic>> get conversations => _conversations;
+
+  Future<String> getOrCreateConversation({
+    required String patientId,
+    required String doctorId,
+  }) async {
+    final String pId = patientId.trim();
+    final String dId = doctorId.trim().isEmpty ? 'admin_support' : doctorId.trim();
+    final String cleanPId = pId.replaceAll(RegExp(r'[\s\-()]+'), '_');
+    final String cleanDId = dId.replaceAll(RegExp(r'[\s\-()]+'), '_');
+    final String deterministicConvId = 'conv_${cleanPId}_$cleanDId';
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final convPayload = {
+          'id': deterministicConvId,
+          'patient_id': pId,
+          'doctor_id': dId,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        };
+        final res = await client
+            .from('conversations')
+            .upsert(convPayload)
+            .select()
+            .maybeSingle();
+
+        if (res != null && res['id'] != null) {
+          final convId = res['id'].toString();
+          if (!_conversations.any((c) => c['id'] == convId)) {
+            _conversations.add(Map<String, dynamic>.from(res));
+          }
+          return convId;
+        }
+      } catch (e) {
+        debugPrint("[CONVERSATION_UPSERT_NOTICE] $e");
+      }
+    }
+
+    if (!_conversations.any((c) => c['id'] == deterministicConvId)) {
+      _conversations.add({
+        'id': deterministicConvId,
+        'patient_id': pId,
+        'doctor_id': dId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+    return deterministicConvId;
+  }
+
+  Future<void> openDoctorConversation({
+    required String patientId,
+    required String doctorId,
+  }) async {
+    final convId = await getOrCreateConversation(
+      patientId: patientId,
+      doctorId: doctorId,
+    );
+    await setActiveConversation(convId);
+  }
+
+  Future<void> setActiveConversation(String? conversationId) async {
+    _activeConversationId = conversationId;
+    await fetchMessagesSilently();
+  }
+
+  Future<void> fetchMessagesForActiveConversation() async {
+    if (_activeConversationId == null || _activeConversationId!.isEmpty) return;
+    final conversationId = _activeConversationId!;
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final messagesData = await client
+            .from('messages')
+            .select()
+            .eq('conversation_id', conversationId)
+            .order('created_at', ascending: true);
+
+        final list = <Map<String, dynamic>>[];
+        for (var msg in messagesData) {
+          final rawText = msg['text'] ?? msg['message'] ?? '';
+          final decryptedText = EncryptionService.decrypt(rawText);
+
+          list.add({
+            'id': msg['id'].toString(),
+            'conversation_id':
+                msg['conversation_id']?.toString() ?? conversationId,
+            'sender_id': msg['sender_id'] ?? '',
+            'sender_name': msg['sender_name'] ?? '',
+            'sender_role': msg['sender_role'] ?? '',
+            'text': decryptedText,
+            'message': decryptedText,
+            'image_url': msg['image_url'] ?? '',
+            'patient_id': msg['patient_id'] ?? '',
+            'doctor_id': msg['doctor_id'] ?? '',
+            'doctor_name': msg['doctor_name'] ?? '',
+            'time': msg['created_at'] != null
+                ? msg['created_at'].toString()
+                : '',
+            'is_read': msg['is_read'] ?? false,
+          });
+        }
+
+        _chatMessages.clear();
+        _chatMessages.addAll(list);
+        notifyListeners();
+      } catch (e) {
+        debugPrint(
+          "Failed to fetch messages for conversation $conversationId: $e",
+        );
+      }
+    }
+  }
+
+  Future<void> sendChatMessage(
+    String senderId,
+    String senderName,
+    String text,
+    String patientId, {
+    String? imageUrl,
+    String? doctorId,
+    String? doctorName,
+    String? conversationId,
+    String? senderRole,
+  }) async {
+    final client = SupabaseService.instance.client;
+    final String docIdVal = doctorId ?? 'admin_support';
+    final String docNameVal = doctorName ?? 'Nasiib Hospital Support';
+    final String roleVal = senderRole ?? (senderId == 'admin' || senderId == 'doctor' ? 'admin' : 'patient');
+
+    String activeConvId = conversationId ?? _activeConversationId ?? '';
+    if (activeConvId.isEmpty) {
+      activeConvId = await getOrCreateConversation(
+        patientId: patientId,
+        doctorId: docIdVal,
+      );
+      _activeConversationId = activeConvId;
+    }
+
+    final tempMsg = {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'conversation_id': activeConvId,
+      'sender_id': senderId,
+      'sender_name': senderName,
+      'sender_role': roleVal,
+      'text': text,
+      'message': text,
+      'image_url': imageUrl ?? '',
+      'patient_id': patientId,
+      'doctor_id': docIdVal,
+      'doctor_name': docNameVal,
+      'time': DateTime.now().toIso8601String(),
+      'is_read': false,
+    };
+    _chatMessages.add(tempMsg);
+    notifyListeners();
+
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final encryptedText = EncryptionService.encrypt(text);
+
+        // Pre-upsert parent conversation record to avoid Foreign Key constraint error
+        try {
+          await client.from('conversations').upsert({
+            'id': activeConvId,
+            'patient_id': patientId,
+            'doctor_id': docIdVal,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          });
+        } catch (convErr) {
+          debugPrint("[CONV_PRE_UPSERT] $convErr");
+        }
+
+        final textPayload = (imageUrl != null && imageUrl.isNotEmpty) ? imageUrl : text;
+
+        final Map<String, dynamic> minimalPayload = {
+          'sender_id': senderId,
+          'patient_id': patientId,
+          'patient_name': senderName,
+          'sender_name': senderName,
+          'message': textPayload,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        };
+
+        try {
+          final richPayload = Map<String, dynamic>.from(minimalPayload);
+          richPayload['conversation_id'] = activeConvId;
+          richPayload['sender_role'] = roleVal;
+          richPayload['text'] = textPayload;
+          richPayload['content'] = textPayload;
+          if (imageUrl != null && imageUrl.isNotEmpty) {
+            richPayload['image_url'] = imageUrl;
+            richPayload['media_url'] = imageUrl;
+          }
+          richPayload['doctor_id'] = docIdVal;
+          richPayload['doctor_name'] = docNameVal;
+          richPayload['is_read'] = false;
+
+          final inserted = await client.from('messages').insert(richPayload).select().maybeSingle();
+          if (inserted != null && inserted['id'] != null) {
+            tempMsg['id'] = inserted['id'].toString();
+          }
+        } catch (richErr) {
+          debugPrint("[SUPABASE RICH INSERT NOTICE] $richErr. Retrying minimal insert...");
+          try {
+            final inserted = await client.from('messages').insert(minimalPayload).select().maybeSingle();
+            if (inserted != null && inserted['id'] != null) {
+              tempMsg['id'] = inserted['id'].toString();
+            }
+          } catch (minErr) {
+            debugPrint("[SUPABASE MINIMAL INSERT ERROR] $minErr");
+          }
+        }
+      } catch (e) {
+        debugPrint("Failed to send message to Supabase: $e");
+      }
+    }
+  }
+
+  void markChatAsRead(String patientIdOrName) {
+    bool updated = false;
+    for (var msg in _chatMessages) {
+      final pId = msg['patient_id']?.toString() ?? '';
+      final sName = msg['sender_name']?.toString() ?? '';
+      final sId = msg['sender_id']?.toString() ?? '';
+
+      if (pId == patientIdOrName ||
+          sName == patientIdOrName ||
+          sId == patientIdOrName ||
+          pId.toLowerCase() == patientIdOrName.toLowerCase() ||
+          sName.toLowerCase() == patientIdOrName.toLowerCase()) {
+        if (msg['is_read'] != true) {
+          msg['is_read'] = true;
+          updated = true;
+        }
+      }
+    }
+    if (updated) {
+      notifyListeners();
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        client
+            .from('messages')
+            .update({'is_read': true})
+            .eq('patient_id', patientIdOrName)
+            .catchError(
+              (e) => debugPrint(
+                "Failed to update read status patient_id in Supabase: $e",
+              ),
+            );
+        client
+            .from('messages')
+            .update({'is_read': true})
+            .eq('sender_name', patientIdOrName)
+            .catchError(
+              (e) => debugPrint(
+                "Failed to update read status sender_name in Supabase: $e",
+              ),
+            );
+      }
+    }
+  }
+
+  Future<void> deleteChatMessage(String msgId) async {
+    // Remove locally
+    _chatMessages.removeWhere((m) => m['id'] == msgId);
+    notifyListeners();
+
+    // Remove from Supabase
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final parsedId = int.tryParse(msgId);
+        if (parsedId != null) {
+          await client.from('messages').delete().eq('id', parsedId);
+        } else {
+          await client.from('messages').delete().eq('id', msgId);
+        }
+        debugPrint("Deleted message $msgId from Supabase");
+      } catch (e) {
+        debugPrint("Failed to delete message from Supabase: $e");
+      }
+    }
+  }
+
+  Future<void> deleteConversationPermanently({
+    required String patientId,
+    required String doctorId,
+    required String doctorName,
+  }) async {
+    final cleanDocId = doctorId.replaceAll('doc_', '');
+
+    // 1. Remove all matching messages from local state immediately
+    _chatMessages.removeWhere((m) {
+      final mPatient = m['patient_id']?.toString() ?? '';
+      final mDocId = m['doctor_id']?.toString() ?? '';
+      final mDocName = m['doctor_name']?.toString() ?? '';
+
+      final matchDoc =
+          mDocId == doctorId ||
+          mDocId == cleanDocId ||
+          (mDocName.isNotEmpty &&
+              mDocName.toLowerCase() == doctorName.toLowerCase());
+      final matchPatient =
+          mPatient.isEmpty ||
+          mPatient == patientId ||
+          (currentUser != null &&
+              (mPatient == currentUser!.fullName ||
+                  mPatient == currentUser!.id));
+
+      return matchDoc && matchPatient;
+    });
+
+    notifyListeners();
+
+    // 2. Delete permanently from Supabase DB 'messages' table
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final parsedDocId = int.tryParse(cleanDocId);
+        if (parsedDocId != null) {
+          await client
+              .from('messages')
+              .delete()
+              .eq('doctor_id', parsedDocId.toString());
+        }
+        await client.from('messages').delete().eq('doctor_id', doctorId);
+        if (doctorName.isNotEmpty) {
+          await client.from('messages').delete().eq('doctor_name', doctorName);
+          await client
+              .from('messages')
+              .delete()
+              .ilike('doctor_name', '%$doctorName%');
+        }
+        debugPrint(
+          "[CHAT_DELETE] Permanently deleted conversation for doctor '$doctorName' (ID=$doctorId).",
+        );
+      } catch (e) {
+        debugPrint("[CHAT_DELETE] Delete chat error: $e");
+      }
+    }
+  }
+
+  String? _lastMessageTimestamp;
+
+  Future<void> fetchMessagesSilently() async {
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        var query = client.from('messages').select();
+        if (_chatMessages.isNotEmpty &&
+            _lastMessageTimestamp != null &&
+            _lastMessageTimestamp!.isNotEmpty) {
+          query = query.gt('created_at', _lastMessageTimestamp!);
+        }
+
+        final messagesData = await query.order('created_at', ascending: true);
+
+        if (messagesData.isNotEmpty) {
+          bool addedNew = false;
+          for (var msg in messagesData) {
+            final String msgId = msg['id'].toString();
+            final rawTime = msg['created_at'] != null
+                ? msg['created_at'].toString()
+                : '';
+            if (rawTime.isNotEmpty) {
+              _lastMessageTimestamp = rawTime;
+            }
+
+            if (!_chatMessages.any((m) => m['id'] == msgId)) {
+              final rawText = (msg['message'] ?? msg['text'] ?? msg['content'] ?? '').toString();
+              final decryptedText = EncryptionService.decrypt(rawText);
+              String imgUrl = (msg['image_url'] ?? msg['media_url'] ?? msg['attachment_url'] ?? '').toString().trim();
+              if (imgUrl.isEmpty && (rawText.startsWith('http://') || rawText.startsWith('https://') || rawText.startsWith('data:image/'))) {
+                imgUrl = rawText.trim();
+              }
+
+              _chatMessages.add({
+                'id': msgId,
+                'sender_id': msg['sender_id'] ?? '',
+                'sender_name': msg['sender_name'] ?? '',
+                'text': decryptedText,
+                'message': decryptedText,
+                'image_url': imgUrl,
+                'media_url': imgUrl,
+                'patient_id': msg['patient_id'] ?? '',
+                'doctor_id': msg['doctor_id'] ?? '',
+                'doctor_name': msg['doctor_name'] ?? '',
+                'time': rawTime,
+                'is_read': msg['is_read'] ?? false,
+              });
+              addedNew = true;
+            }
+          }
+          if (addedNew) {
+            notifyListeners();
+          }
+        }
+      } catch (err) {
+        debugPrint("Failed to fetch messages silently from Supabase: $err");
+      }
+    }
+  }
+
+  // --- REAL-TIME ORDERS & PHARMACY DELIVERY PORTAL ---
+  List<Map<String, dynamic>> _orders = [];
+  List<Map<String, dynamic>> get orders {
+    if (isAdminMode) return _orders;
+    final String currentPhone = (_currentUser?.phoneNumber ?? '').replaceAll(RegExp(r'[\s\-()]+'), '');
+    if (currentPhone.isEmpty) return [];
+    
+    final String cleanDigits = currentPhone.replaceAll('+252', '').replaceAll(RegExp(r'^252|^0'), '');
+
+    return _orders.where((o) {
+      final pPhone = (o['patient_phone'] ?? o['patientPhone'] ?? o['phone'] ?? '').toString().replaceAll(RegExp(r'[\s\-()]+'), '');
+      if (pPhone.isEmpty) return false;
+      final pDigits = pPhone.replaceAll('+252', '').replaceAll(RegExp(r'^252|^0'), '');
+      return pDigits == cleanDigits || pPhone == currentPhone;
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _orderItems = [];
+  List<Map<String, dynamic>> get orderItems => _orderItems;
+
+  final List<Map<String, dynamic>> _nurseOrders = [];
+  List<Map<String, dynamic>> get nurseOrders => _nurseOrders;
+
+  final List<Map<String, dynamic>> _payments = [];
+  List<Map<String, dynamic>> get payments => _payments;
+
+  RealtimeChannel? _systemSyncChannel;
+
+  void initRealtimeSubscriptions() {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    _systemSyncChannel?.unsubscribe();
+
+    final String channelName = 'admin_appointments_realtime_${DateTime.now().millisecondsSinceEpoch}';
+    debugPrint("[SUPABASE_REALTIME] Connecting WebSocket channel: $channelName");
+
+    _systemSyncChannel = client
+        .channel(channelName)
+        // 1. Appointments (Bookings, status updates, cancellations, deletions)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'appointments',
+          callback: (payload) {
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              print('🟢 REALTIME INSERT RECEIVED: $newRecord');
+              debugPrint('🟢 [SUPABASE_REALTIME] REALTIME INSERT RECEIVED: $newRecord');
+
+              final newModel = AppointmentModel.fromJson(newRecord);
+              _appointments.removeWhere((a) =>
+                  a.id == newModel.id ||
+                  (a.referenceId.isNotEmpty && a.referenceId == newModel.referenceId));
+              _appointments.insert(0, newModel);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              print('🟢 REALTIME UPDATE RECEIVED: $newRecord');
+              debugPrint('🟢 [SUPABASE_REALTIME] REALTIME UPDATE RECEIVED: $newRecord');
+
+              final updatedModel = AppointmentModel.fromJson(newRecord);
+              final idx = _appointments.indexWhere((a) =>
+                  a.id == updatedModel.id ||
+                  (a.referenceId.isNotEmpty && a.referenceId == updatedModel.referenceId));
+              if (idx != -1) {
+                _appointments[idx] = updatedModel;
+              } else {
+                _appointments.insert(0, updatedModel);
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              print('🟢 REALTIME DELETE RECEIVED: $oldRecord');
+              debugPrint('🟢 [SUPABASE_REALTIME] REALTIME DELETE RECEIVED: $oldRecord');
+
+              final String deletedId = oldRecord['id']?.toString() ?? '';
+              final String deletedRef = oldRecord['reference_id']?.toString() ?? '';
+              _appointments.removeWhere((a) =>
+                  (deletedId.isNotEmpty && a.id == deletedId) ||
+                  (deletedRef.isNotEmpty && a.referenceId == deletedRef));
+              notifyListeners();
+            }
+          },
+        )
+        // 2. Doctors (Additions, edits, status/roster changes)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'doctors',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Doctors event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final newModel = DoctorModel.fromJson(newRecord);
+              _doctors.removeWhere((d) => d.id == newModel.id);
+              _doctors.insert(0, newModel);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final updatedModel = DoctorModel.fromJson(newRecord);
+              final idx = _doctors.indexWhere((d) => d.id == updatedModel.id);
+              if (idx != -1) {
+                _doctors[idx] = updatedModel;
+              } else {
+                _doctors.insert(0, updatedModel);
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String deletedId = oldRecord['id']?.toString() ?? '';
+              _doctors.removeWhere((d) => d.id == deletedId);
+              notifyListeners();
+            }
+          },
+        )
+        // 3. Medicines (Catalog, prices, stock changes)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'medicines',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Medicines event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final newModel = MedicineModel.fromJson(newRecord);
+              _medicines.removeWhere((m) => m.id == newModel.id);
+              _medicines.insert(0, newModel);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final updatedModel = MedicineModel.fromJson(newRecord);
+              final idx = _medicines.indexWhere((m) => m.id == updatedModel.id);
+              if (idx != -1) {
+                _medicines[idx] = updatedModel;
+              } else {
+                _medicines.insert(0, updatedModel);
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String deletedId = oldRecord['id']?.toString() ?? '';
+              _medicines.removeWhere((m) => m.id == deletedId);
+              notifyListeners();
+            }
+          },
+        )
+        // 4. Pharmacy Orders
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'orders',
+          callback: (payload) async {
+            debugPrint("[SUPABASE_REALTIME] Orders event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final String orderId = newRecord['id'].toString();
+              List<Map<String, dynamic>> itemsList = [];
+              try {
+                final itemsData = await client.from('order_items').select().eq('order_id', orderId);
+                itemsList = List<Map<String, dynamic>>.from(itemsData);
+              } catch (e) {
+                debugPrint("[SUPABASE_REALTIME] Order items load notice: $e");
+              }
+              _orders.removeWhere((o) => o['id'].toString() == orderId);
+              _orders.insert(0, Map<String, dynamic>.from(newRecord));
+              _orderItems.removeWhere((item) => item['order_id'].toString() == orderId);
+              _orderItems.addAll(itemsList);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final String orderId = newRecord['id'].toString();
+              final idx = _orders.indexWhere((o) => o['id'].toString() == orderId);
+              if (idx != -1) {
+                _orders[idx] = Map<String, dynamic>.from(newRecord);
+              } else {
+                _orders.insert(0, Map<String, dynamic>.from(newRecord));
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String orderId = oldRecord['id']?.toString() ?? '';
+              _orders.removeWhere((o) => o['id'].toString() == orderId);
+              _orderItems.removeWhere((item) => item['order_id'].toString() == orderId);
+              notifyListeners();
+            }
+          },
+        )
+        // 5. Nurses
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'nurses',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Nurses event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final newModel = NurseModel.fromJson(newRecord);
+              _nurses.removeWhere((n) => n.id == newModel.id);
+              _nurses.insert(0, newModel);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final updatedModel = NurseModel.fromJson(newRecord);
+              final idx = _nurses.indexWhere((n) => n.id == updatedModel.id);
+              if (idx != -1) {
+                _nurses[idx] = updatedModel;
+              } else {
+                _nurses.insert(0, updatedModel);
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String deletedId = oldRecord['id']?.toString() ?? '';
+              _nurses.removeWhere((n) => n.id == deletedId);
+              notifyListeners();
+            }
+          },
+        )
+        // 6. Nurse Dispatch Requests / Orders
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'nurse_orders',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Nurse Orders event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final String orderId = newRecord['id'].toString();
+              _nurseOrders.removeWhere((b) => b['id'].toString() == orderId);
+              _nurseOrders.insert(0, Map<String, dynamic>.from(newRecord));
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final String orderId = newRecord['id'].toString();
+              final idx = _nurseOrders.indexWhere((b) => b['id'].toString() == orderId);
+              if (idx != -1) {
+                _nurseOrders[idx] = Map<String, dynamic>.from(newRecord);
+              } else {
+                _nurseOrders.insert(0, Map<String, dynamic>.from(newRecord));
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String orderId = oldRecord['id']?.toString() ?? '';
+              _nurseOrders.removeWhere((b) => b['id'].toString() == orderId);
+              notifyListeners();
+            }
+          },
+        )
+        // 7. Instant Revenue / Payments
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'payments',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Payments event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final String payId = newRecord['id'].toString();
+              _payments.removeWhere((p) => p['id'].toString() == payId);
+              _payments.insert(0, Map<String, dynamic>.from(newRecord));
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final String payId = newRecord['id'].toString();
+              final idx = _payments.indexWhere((p) => p['id'].toString() == payId);
+              if (idx != -1) {
+                _payments[idx] = Map<String, dynamic>.from(newRecord);
+              } else {
+                _payments.insert(0, Map<String, dynamic>.from(newRecord));
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String payId = oldRecord['id']?.toString() ?? '';
+              _payments.removeWhere((p) => p['id'].toString() == payId);
+              notifyListeners();
+            }
+          },
+        )
+        // 8. Specialties
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'specialties',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Specialties event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final newModel = SpecialtyModel.fromJson(newRecord);
+              _specialties.removeWhere((s) => s.id == newModel.id);
+              _specialties.insert(0, newModel);
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.update && newRecord.isNotEmpty) {
+              final updatedModel = SpecialtyModel.fromJson(newRecord);
+              final idx = _specialties.indexWhere((s) => s.id == updatedModel.id);
+              if (idx != -1) {
+                _specialties[idx] = updatedModel;
+              } else {
+                _specialties.insert(0, updatedModel);
+              }
+              notifyListeners();
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String deletedId = oldRecord['id']?.toString() ?? '';
+              _specialties.removeWhere((s) => s.id == deletedId);
+              notifyListeners();
+            }
+          },
+        )
+        // 9. Real-time Admin Notifications & Broadcast Messages (Supabase Stream)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'notifications',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Notifications event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+            final oldRecord = payload.oldRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final String targetUser = (newRecord['target_user_id'] ?? newRecord['target_phone'] ?? newRecord['user_id'] ?? 'all').toString();
+              final String currentPhone = (_currentUser?.phoneNumber ?? '').replaceAll(RegExp(r'[\s\-()]+'), '');
+              final String currentUserId = _currentUser?.id ?? '';
+              
+              final bool isForMe = targetUser == 'all' ||
+                  targetUser == 'broadcast' ||
+                  targetUser.isEmpty ||
+                  targetUser == 'null' ||
+                  targetUser == currentUserId ||
+                  (currentPhone.isNotEmpty && targetUser.contains(currentPhone));
+
+              if (isForMe) {
+                final String itemId = newRecord['id'].toString();
+                _notifications.removeWhere((n) => n['id'].toString() == itemId);
+                _notifications.insert(0, {
+                  'id': itemId,
+                  'title': newRecord['title'] ?? 'Announcement',
+                  'body': newRecord['body'] ?? '',
+                  'time': 'Just now',
+                  'sender': newRecord['sender_label'] ?? newRecord['sender'] ?? 'Nasiib Hospital Admin',
+                  'isRead': false,
+                });
+                _hasUnreadNotification = true;
+                notifyListeners();
+              }
+            } else if (eventType == PostgresChangeEvent.delete && oldRecord.isNotEmpty) {
+              final String itemId = oldRecord['id']?.toString() ?? '';
+              _notifications.removeWhere((n) => n['id'].toString() == itemId);
+              notifyListeners();
+            }
+          },
+        )
+        // 10. Instant Chat Messages
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) {
+            debugPrint("[SUPABASE_REALTIME] Messages event: ${payload.eventType}");
+            final eventType = payload.eventType;
+            final newRecord = payload.newRecord;
+
+            if (eventType == PostgresChangeEvent.insert && newRecord.isNotEmpty) {
+              final String msgId = newRecord['id'].toString();
+              if (!_chatMessages.any((m) => m['id'].toString() == msgId)) {
+                final rawText = newRecord['text'] ?? '';
+                final decryptedText = EncryptionService.decrypt(rawText);
+                _chatMessages.add({
+                  'id': msgId,
+                  'sender_id': newRecord['sender_id'] ?? '',
+                  'sender_name': newRecord['sender_name'] ?? '',
+                  'text': decryptedText,
+                  'image_url': newRecord['image_url'] ?? '',
+                  'patient_id': newRecord['patient_id'] ?? '',
+                  'doctor_id': newRecord['doctor_id'] ?? '',
+                  'doctor_name': newRecord['doctor_name'] ?? '',
+                  'time': newRecord['created_at'] != null ? newRecord['created_at'].toString() : '',
+                  'is_read': newRecord['is_read'] ?? false,
+                });
+              }
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  Future<String?> placeOrder({
+    required String patientName,
+    required String patientPhone,
+    required String city,
+    required String district,
+    required String deliveryAddress,
+    required double subtotal,
+    required double deliveryFee,
+    required double totalAmount,
+    required String paymentMethod,
+    required String paymentStatus,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return null;
+
+    try {
+      final String hexSuffix = Random().nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
+      final String orderNum = '#ORD-$hexSuffix';
+      final String orderId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      final orderPayload = {
+        'id': orderId,
+        'order_number': orderNum,
+        'customer_name': patientName,
+        'patient_name': patientName,
+        'phone': patientPhone,
+        'patient_phone': patientPhone,
+        'city': city,
+        'district': district,
+        'neighborhood': deliveryAddress,
+        'customer_address': '$deliveryAddress, $district, $city',
+        'delivery_address': deliveryAddress,
+        'subtotal': subtotal,
+        'delivery_fee': deliveryFee,
+        'total_amount': totalAmount,
+        'payment_method': paymentMethod,
+        'payment_status': paymentStatus,
+        'status': 'Pending',
+        'tracking_number': 'TRK-$hexSuffix',
+        'current_location': 'Warehouse',
+        'estimated_delivery': '30-45 mins',
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      Map<String, dynamic>? insertedOrder;
+      try {
+        final res = await client.from('orders').insert(orderPayload).select().maybeSingle();
+        if (res != null) {
+          insertedOrder = Map<String, dynamic>.from(res);
+        }
+      } on PostgrestException catch (pgErr) {
+        debugPrint("[SUPABASE_ORDER_ERROR] PostgrestException: ${pgErr.message} | Details: ${pgErr.details}");
+      } catch (err) {
+        debugPrint("[SUPABASE_ORDER_ERROR] Error inserting order: $err");
+      }
+
+      final String finalOrderId = insertedOrder != null && insertedOrder['id'] != null
+          ? insertedOrder['id'].toString()
+          : orderId;
+
+      _orders.removeWhere((o) => o['id'].toString() == finalOrderId);
+      _orders.insert(0, insertedOrder ?? Map<String, dynamic>.from(orderPayload));
+
+      for (var item in items) {
+        final itemPayload = {
+          'order_id': finalOrderId,
+          'medicine_name': item['name'] ?? item['title'] ?? 'Medicine Item',
+          'quantity': item['quantity'] ?? 1,
+          'unit_price': item['price'] ?? 0.0,
+          'total_price':
+              ((item['price'] ?? 0.0) as num).toDouble() *
+              ((item['quantity'] ?? 1) as num).toInt(),
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        try {
+          await client.from('order_items').insert(itemPayload);
+        } catch (e) {
+          debugPrint("[SUPABASE_ORDER_ITEMS_ERROR] Failed inserting order item: $e");
+        }
+        _orderItems.add(itemPayload);
+      }
+
+      await client.from('payments').insert({
+        'order_id': orderId,
+        'patient_name': patientName,
+        'patient_phone': patientPhone,
+        'payment_method': paymentMethod,
+        'amount': totalAmount,
+        'status': paymentStatus == 'Paid' ? 'Completed' : 'Pending',
+        'transaction_id': 'TXN-${DateTime.now().millisecondsSinceEpoch}',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      notifyListeners();
+      return orderId;
+    } catch (e) {
+      debugPrint("Failed to place order in Supabase: $e");
+      return null;
+    }
+  }
+
+  Future<bool> updateOrderStatus(String orderId, String newStatus) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return false;
+
+    try {
+      String location = 'Warehouse';
+      if (newStatus == 'Accepted' || newStatus == 'Preparing') {
+        location = 'Pharmacy Prep Room';
+      } else if (newStatus == 'Ready') {
+        location = 'Dispatch Counter';
+      } else if (newStatus == 'Out for Delivery') {
+        location = 'On the way to customer';
+      } else if (newStatus == 'Delivered') {
+        location = 'Delivered to Patient';
+      } else if (newStatus == 'Cancelled') {
+        location = 'Order Cancelled';
+      }
+
+      await client
+          .from('orders')
+          .update({'status': newStatus, 'current_location': location})
+          .eq('id', orderId);
+
+      final idx = _orders.indexWhere((o) => o['id'].toString() == orderId);
+      if (idx != -1) {
+        _orders[idx]['status'] = newStatus;
+        _orders[idx]['current_location'] = location;
+      }
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("Failed to update order status in Supabase: $e");
+      return false;
+    }
+  }
+
+  /// Fetch orders belonging to the current user by user_id, patient_id, OR phone.
+  /// Called from MyOrdersScreen.initState() to ensure the list is always fresh.
+  Future<void> fetchUserOrders() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    try {
+      final supabaseUser = client.auth.currentUser;
+      final phone = (_currentUser?.phoneNumber ?? '').trim();
+      final name = (_currentUser?.fullName ?? '').trim();
+
+      List<dynamic> response = [];
+
+      // ── Step 1: Try user-scoped query ──────────────────────────────────
+      if (supabaseUser != null) {
+        // Authenticated Supabase user — filter by user_id
+        try {
+          response = await client
+              .from('orders')
+              .select()
+              .eq('user_id', supabaseUser.id)
+              .order('created_at', ascending: false);
+        } catch (_) {}
+
+        // If no orders found by user_id, try phone
+        if (response.isEmpty && phone.isNotEmpty) {
+          try {
+            response = await client
+                .from('orders')
+                .select()
+                .eq('patient_phone', phone)
+                .order('created_at', ascending: false);
+          } catch (_) {}
+        }
+      } else if (phone.isNotEmpty) {
+        // No Supabase auth user but we have a phone number
+        try {
+          response = await client
+              .from('orders')
+              .select()
+              .eq('patient_phone', phone)
+              .order('created_at', ascending: false);
+        } catch (_) {}
+      }
+      // ── Step 3: Replace _orders cleanly ───────────────────────────────
+      final List<Map<String, dynamic>> freshList = response
+          .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+      // Merge: preserve any Realtime-only records not in the fresh fetch,
+      // update existing ones with the freshly fetched copy.
+      for (final record in freshList) {
+        final String id = record['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final idx = _orders.indexWhere((o) => o['id']?.toString() == id);
+        if (idx != -1) {
+          _orders[idx] = record;
+        } else {
+          _orders.insert(0, record);
+        }
+      }
+
+      notifyListeners();
+      debugPrint('[ORDERS] fetchUserOrders → ${response.length} orders loaded');
+    } catch (e) {
+      debugPrint('[ORDERS] fetchUserOrders error: $e');
+    }
+  }
+
+  /// Fetch ALL orders from Supabase for the Web Admin / Pharmacy panel.
+  /// Called on page reload so the list never disappears on browser refresh.
+  Future<void> fetchPharmacyOrders() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return;
+
+    try {
+      final data = await client
+          .from('orders')
+          .select()
+          .order('created_at', ascending: false);
+
+      // Merge fetched records into _orders without wiping Realtime data.
+      for (final row in data) {
+        final Map<String, dynamic> record = Map<String, dynamic>.from(row);
+        final String id = record['id']?.toString() ?? '';
+        final idx = _orders.indexWhere((o) => o['id']?.toString() == id);
+        if (idx != -1) {
+          _orders[idx] = record;
+        } else {
+          _orders.add(record);
+        }
+      }
+
+      // Also fetch order items
+      try {
+        final itemsData = await client.from('order_items').select();
+        for (final row in itemsData) {
+          final Map<String, dynamic> item = Map<String, dynamic>.from(row);
+          final String orderId = item['order_id']?.toString() ?? '';
+          _orderItems.removeWhere((i) =>
+              i['id']?.toString() == item['id']?.toString());
+          if (orderId.isNotEmpty) _orderItems.add(item);
+        }
+      } catch (_) {}
+
+      notifyListeners();
+      debugPrint('[ORDERS] fetchPharmacyOrders → ${data.length} orders loaded');
+    } catch (e) {
+      debugPrint('[ORDERS] fetchPharmacyOrders error: $e');
+    }
+  }
+
+  Future<bool> deleteOrder(String orderId) async {
+    _orders.removeWhere((o) => o['id']?.toString() == orderId || o['order_number']?.toString() == orderId);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client.from('orders').delete().eq('id', orderId);
+      } catch (e) {
+        debugPrint("[ORDERS] Error deleting order $orderId: $e");
+      }
+    }
+    return true;
+  }
+
+  bool _globalDoctorOnlineStatus = true;
+  bool get globalDoctorOnlineStatus => _globalDoctorOnlineStatus;
+
+  String getLoggedInDoctorId(String userRole, String? userEmail) {
+    if (_doctors.isEmpty) return '1';
+    final email = (userEmail ?? '').toLowerCase();
+    if (email.contains('mukhtar')) {
+      for (var d in _doctors) {
+        if (d.name.toLowerCase().contains('mukhtar')) return d.id;
+      }
+    }
+    final cleanEmailPrefix = email
+        .split('@')[0]
+        .replaceAll('dr', '')
+        .replaceAll('.', '')
+        .replaceAll('_', '');
+    for (var doc in _doctors) {
+      final cleanDocName = doc.name
+          .toLowerCase()
+          .replaceAll('dr', '')
+          .replaceAll('.', '')
+          .replaceAll(' ', '')
+          .replaceAll('_', '');
+      if (cleanEmailPrefix.isNotEmpty &&
+          (cleanDocName.contains(cleanEmailPrefix) ||
+              cleanEmailPrefix.contains(cleanDocName))) {
+        return doc.id;
+      }
+    }
+    return _doctors.first.id;
+  }
+
+  Future<bool> setDoctorOnlineStatus(String doctorId, bool isOnline) async {
+    final client = SupabaseService.instance.client;
+    final nowIso = DateTime.now().toIso8601String();
+
+    final cleanId = doctorId.replaceAll('doc_', '');
+    _doctorAvailabilityMap[doctorId] = isOnline;
+    _doctorAvailabilityMap[cleanId] = isOnline;
+    _doctorAvailabilityMap['doc_$cleanId'] = isOnline;
+
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final dynamic idValue = int.tryParse(cleanId) ?? doctorId;
+        final updatePayload = {'is_online': isOnline, 'last_seen': nowIso};
+
+        var res = await client
+            .from('doctors')
+            .update(updatePayload)
+            .eq('id', doctorId)
+            .select();
+
+        if (res.isEmpty) {
+          res = await client
+              .from('doctors')
+              .update(updatePayload)
+              .eq('id', idValue)
+              .select();
+        }
+
+        if (res.isNotEmpty) {
+          final confirmedDoc = DoctorModel.fromJson(
+            Map<String, dynamic>.from(res.first),
+          );
+          for (int i = 0; i < _doctors.length; i++) {
+            if (_doctors[i].id == doctorId ||
+                _doctors[i].id == confirmedDoc.id ||
+                _doctors[i].id == 'doc_${confirmedDoc.id}') {
+              _doctors[i] = _doctors[i].copyWith(
+                isOnline: confirmedDoc.isOnline,
+                isAvailable: confirmedDoc.isOnline,
+                lastSeen: nowIso,
+              );
+            }
+          }
+          notifyListeners();
+          return true;
+        }
+      } catch (e) {
+        debugPrint("[DOCTOR_STATUS] Supabase UPDATE failed: $e");
+      }
+    }
+
+    // Local update fallback if offline
+    for (int i = 0; i < _doctors.length; i++) {
+      if (_doctors[i].id == doctorId ||
+          _doctors[i].id == 'doc_$doctorId' ||
+          doctorId == 'doc_${_doctors[i].id}') {
+        _doctors[i] = _doctors[i].copyWith(
+          isOnline: isOnline,
+          isAvailable: isOnline,
+          lastSeen: nowIso,
+        );
+      }
+    }
+    notifyListeners();
+    return false;
+  }
+
+  Future<void> toggleDoctorAvailability(
+    String doctorId,
+    bool isAvailable,
+  ) async {
+    await setDoctorOnlineStatus(doctorId, isAvailable);
+  }
+
+  Future<bool> toggleDoctorChatVisibility(
+    String doctorId,
+    bool showInChat,
+  ) async {
+    final client = SupabaseService.instance.client;
+    final cleanId = doctorId.replaceAll('doc_', '');
+    final dynamic idValue = int.tryParse(cleanId) ?? doctorId;
+
+    for (int i = 0; i < _doctors.length; i++) {
+      if (_doctors[i].id == doctorId ||
+          _doctors[i].id == cleanId ||
+          _doctors[i].id == 'doc_$cleanId') {
+        _doctors[i] = _doctors[i].copyWith(showInChat: showInChat);
+      }
+    }
+    notifyListeners();
+
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final payload = {'show_in_chat': showInChat};
+        var res = await client
+            .from('doctors')
+            .update(payload)
+            .eq('id', doctorId)
+            .select();
+
+        if (res.isEmpty) {
+          res = await client
+              .from('doctors')
+              .update(payload)
+              .eq('id', idValue)
+              .select();
+        }
+
+        if (res.isNotEmpty) {
+          final confirmedDoc = DoctorModel.fromJson(
+            Map<String, dynamic>.from(res.first),
+          );
+          for (int i = 0; i < _doctors.length; i++) {
+            if (_doctors[i].id == doctorId ||
+                _doctors[i].id == confirmedDoc.id ||
+                _doctors[i].id == 'doc_${confirmedDoc.id}') {
+              _doctors[i] = _doctors[i].copyWith(
+                showInChat: confirmedDoc.showInChat,
+              );
+            }
+          }
+          notifyListeners();
+          return true;
+        }
+      } catch (e) {
+        debugPrint(
+          "[CHAT_VISIBILITY] Supabase UPDATE notice (column may be missing in legacy table): $e",
+        );
+      }
+    }
+    return false;
+  }
+
+  Future<void> setPatientTyping(bool isTyping) async {
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client
+            .from('patients')
+            .update({'is_typing': isTyping})
+            .eq('id', _currentUser?.id ?? 'usr_1');
+      } catch (e) {
+        debugPrint("Failed to update patient typing status in Supabase: $e");
+      }
+    }
+  }
+
+  Future<void> setDoctorTyping(String doctorId, bool isTyping) async {
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final cleanId = doctorId.replaceAll('doc_', '');
+        await client
+            .from('doctors')
+            .update({'is_typing': isTyping})
+            .eq('id', cleanId);
+      } catch (e) {
+        debugPrint("Failed to update doctor typing status in Supabase: $e");
+      }
+    }
+  }
+
+  Future<void> markDoctorMessagesAsRead(String doctorName) async {
+    bool updated = false;
+    for (var msg in _chatMessages) {
+      if (msg['sender_name'] == doctorName &&
+          msg['sender_id'] == 'doctor' &&
+          msg['is_read'] != true) {
+        msg['is_read'] = true;
+        updated = true;
+      }
+    }
+    if (updated) {
+      notifyListeners();
+    }
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client
+            .from('messages')
+            .update({'is_read': true})
+            .eq('sender_name', doctorName)
+            .eq('sender_id', 'doctor');
+      } catch (e) {
+        debugPrint("Failed to mark doctor messages as read: $e");
+      }
+    }
+  }
+
+  Future<void> markMessagesAsRead(String patientId) async {
+    bool updated = false;
+    for (var msg in _chatMessages) {
+      if (msg['patient_id'] == patientId &&
+          msg['sender_id'] != 'doctor' &&
+          msg['is_read'] != true) {
+        msg['is_read'] = true;
+        updated = true;
+      }
+    }
+    if (updated) {
+      notifyListeners();
+    }
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        await client
+            .from('messages')
+            .update({'is_read': true})
+            .eq('patient_id', patientId)
+            .neq('sender_id', 'doctor');
+      } catch (e) {
+        debugPrint("Failed to mark messages as read: $e");
+      }
+    }
+  }
+
+  Future<void> deleteMessage(String msgId) async {
+    _chatMessages.removeWhere((m) => m['id'] == msgId);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final parsedId = int.tryParse(msgId);
+        if (parsedId != null) {
+          await client.from('messages').delete().eq('id', parsedId);
+        } else {
+          await client.from('messages').delete().eq('id', msgId);
+        }
+        debugPrint("Deleted message $msgId from Supabase");
+      } catch (e) {
+        debugPrint("Failed to delete message: $e");
+      }
+    }
+  }
+
+  Future<void> deleteNotification(String id) async {
+    _notifications.removeWhere((n) => n['id'] == id);
+    notifyListeners();
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final parsedId = int.tryParse(id);
+        if (parsedId != null) {
+          await client.from('notifications').delete().eq('id', parsedId);
+        } else {
+          await client.from('notifications').delete().eq('id', id);
+        }
+        debugPrint("Deleted notification $id from Supabase");
+      } catch (e) {
+        debugPrint("Failed to delete notification from Supabase: $e");
+      }
+    }
+  }
+}

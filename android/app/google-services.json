@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "80552013298",
+    "project_id": "nasiibhospital-843f4",
+    "storage_bucket": "nasiibhospital-843f4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:80552013298:android:1668038c04f8233afb0f6b",
+        "android_client_info": {
+          "package_name": "com.nasiib.hospital"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDk5_3_nSBw7xVFK8oarmReHhQ9qFc2yeA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

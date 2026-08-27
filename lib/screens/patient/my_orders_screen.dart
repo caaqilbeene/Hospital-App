@@ -121,7 +121,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
         label: 'Delivered',
       );
     }
-    if (s.contains('out')) {
+    if (s.contains('out') || s.contains('way')) {
       return _StatusStyle(
         bg: const Color(0xFFFFF3E0),
         fg: const Color(0xFFF57C00),
@@ -356,13 +356,21 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                                     // ── Delete button ──
                                     GestureDetector(
                                       onTap: () {
+                                        final s = status.trim().toLowerCase();
+                                        if (s.contains('deliver') || s.contains('out') || s.contains('way')) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('Dalabkan waa la gaarsiiyay ama wuxuu ku jiraa jidka, laguma tirtiri karo.'),
+                                              backgroundColor: Colors.orange,
+                                            ),
+                                          );
+                                          return;
+                                        }
                                         showDialog(
                                           context: context,
                                           builder: (ctx) => AlertDialog(
-                                            title: const Text(
-                                                'Delete Order'),
-                                            content: const Text(
-                                                'Ma ziirtaa in aad tirtirto dalabkan?'),
+                                            title: const Text('Delete Order'),
+                                            content: const Text('Ma ziirtaa in aad tirtirto dalabkan?'),
                                             actions: [
                                               TextButton(
                                                 onPressed: () =>
@@ -375,6 +383,12 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                                                   Navigator.pop(ctx);
                                                   appState.deleteOrder(
                                                       orderId);
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text('Dalabka waa la tirtiray.'),
+                                                      backgroundColor: Colors.green,
+                                                    ),
+                                                  );
                                                 },
                                                 style: ElevatedButton
                                                     .styleFrom(

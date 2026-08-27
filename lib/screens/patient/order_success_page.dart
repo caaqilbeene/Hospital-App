@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +20,7 @@ class OrderSuccessPage extends StatefulWidget {
 
 class _OrderSuccessPageState extends State<OrderSuccessPage> {
   RealtimeChannel? _orderChannel;
+  Timer? _pollingTimer;
 
   // Local status state — updated directly by Realtime callback without waiting
   // for the full AppState to rebuild.
@@ -70,20 +72,15 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
             final payloadOrderNum =
                 updatedData['order_number']?.toString() ?? '';
 
-            // Match by id OR order_number — no strict filter to avoid
-            // payload mismatch on Supabase Realtime.
             if (payloadId == widget.orderId ||
                 payloadOrderNum == widget.orderId) {
               final newStatus =
                   updatedData['status']?.toString() ?? _currentStatus;
-              print(
-                  '🟢 [ORDER_TRACKING] Status update received: $newStatus');
               if (mounted) {
                 setState(() {
                   _currentStatus = newStatus;
                 });
 
-                // Also update AppState so other screens are consistent.
                 final appState =
                     Provider.of<AppState>(context, listen: false);
                 final idx = appState.orders.indexWhere(
@@ -98,27 +95,52 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
           },
         )
         .subscribe();
+
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      final supabaseClient = SupabaseService.instance.client;
+      if (supabaseClient != null && SupabaseService.instance.isInitialized) {
+        try {
+          final res = await supabaseClient
+              .from('orders')
+              .select()
+              .or('id.eq.${widget.orderId},order_number.eq.${widget.orderId}');
+          if (res is List && res.isNotEmpty) {
+            final st = res.first['status']?.toString() ?? '';
+            if (st.isNotEmpty && mounted && st != _currentStatus) {
+              setState(() {
+                _currentStatus = st;
+              });
+              final appState = Provider.of<AppState>(context, listen: false);
+              appState.updateOrderStatus(widget.orderId, st);
+            }
+          }
+        } catch (_) {}
+      }
+    });
   }
 
   @override
   void dispose() {
+    _pollingTimer?.cancel();
     _orderChannel?.unsubscribe();
     super.dispose();
   }
 
-  /// Flexible, case-insensitive step resolver.
-  int _getStepIndex(String status) {
-    final s = status.trim().toLowerCase();
-    if ((s.contains('deliver') || s.contains('complet')) &&
-        !s.contains('out') &&
-        !s.contains('ready')) {
-      return 5; // Delivered / Completed
+  /// Flexible, case-insensitive step resolver matching all status variations.
+  int _getStepIndex(String? status) {
+    final s = (status ?? '').trim().toLowerCase().replaceAll('_', ' ');
+    if (s.contains('delivered') || s.contains('gaarsiiyay')) {
+      return 5; // Step 6: Delivered (0-indexed 5)
+    } else if (s.contains('out for delivery') || s.contains('on the way') || s.contains('wadada') || s.contains('soo qaaday') || s.contains('out') || s.contains('way')) {
+      return 4; // Step 5: Out for Delivery (0-indexed 4)
+    } else if (s.contains('ready')) {
+      return 3; // Step 4: Ready
+    } else if (s.contains('preparing') || s.contains('diyaarinta') || s.contains('prep')) {
+      return 2; // Step 3: Preparing
+    } else if (s.contains('accepted') || s.contains('la aqbalay') || s.contains('accept')) {
+      return 1; // Step 2: Accepted
     }
-    if (s.contains('out')) return 4; // Out for Delivery
-    if (s.contains('ready')) return 3; // Ready / Ready for Delivery
-    if (s.contains('prep')) return 2; // Preparing
-    if (s.contains('accept') || s.contains('approv')) return 1; // Accepted
-    return 0; // Order Received / Pending / Placed
+    return 0; // Step 1: Received / Pending
   }
 
   @override
@@ -220,7 +242,9 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _currentStatus.isEmpty ? 'Pending' : _currentStatus,
+                      (currentStepIndex >= 4 && currentStepIndex < 5)
+                          ? "Out for Delivery / Waa la soo qaaday (Wadada ku jiraa)"
+                          : (_currentStatus.isEmpty ? 'Pending' : _currentStatus),
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -256,6 +280,75 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
                 ],
               ),
 
+              const SizedBox(height: 20),
+
+              Builder(
+                builder: (context) {
+                  final rName = (liveOrder['rider_name'] ?? liveOrder['driver_name'] ?? '').toString();
+                  final rPhone = (liveOrder['rider_phone'] ?? liveOrder['driver_phone'] ?? '').toString();
+                  final s = (liveOrder['status'] ?? _currentStatus).toString().trim().toLowerCase();
+                  final isOut = s == 'out for delivery' || s == 'on the way' || s == 'delivered' || currentStepIndex >= 4;
+
+                  if (isOut && rName.isNotEmpty) {
+                    return Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFDCFCE7)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFDCFCE7),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.two_wheeler_rounded, color: Color(0xFF15803D), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Darawalka Gaarsiinaya:',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Text(
+                                  rName,
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                if (rPhone.isNotEmpty)
+                                  Text(
+                                    rPhone,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      color: const Color(0xFF15803D),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+
               const SizedBox(height: 24),
 
               SizedBox(
@@ -263,10 +356,9 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
                 height: 52,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushAndRemoveUntil(
-                      context,
+                    Navigator.of(context).pushAndRemoveUntil(
                       MaterialPageRoute(
-                        builder: (_) => const MainPatientLayout(),
+                        builder: (context) => const MainPatientLayout(),
                       ),
                       (route) => false,
                     );
@@ -318,11 +410,9 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: isCurrent
-                    ? AppTheme.primaryColor
-                    : isCompleted
-                        ? const Color(0xFF10B981)
-                        : const Color(0xFFF1F5F9),
+                color: (isCompleted || isCurrent)
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFF1F5F9),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -338,7 +428,7 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
                 duration: const Duration(milliseconds: 400),
                 width: 2,
                 height: 32,
-                color: isCompleted
+                color: (isCompleted || isCurrent)
                     ? const Color(0xFF10B981)
                     : const Color(0xFFE2E8F0),
               ),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:collection/collection.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
@@ -18,9 +19,11 @@ import '../../services/app_state.dart';
 import '../../services/image_picker_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/encryption_service.dart';
+import '../driver/driver_portal_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/print_service.dart';
+import '../../services/fcm_sender.dart';
 import '../../widgets/network_or_asset_image.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -31,6 +34,8 @@ class AdminDashboardScreen extends StatefulWidget {
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   String _getDoctorAvatar(AppState appState) {
     final String docId = _currentUserRole == 'Admin' ? '1' : '2';
     final doc = appState.doctors.firstWhere(
@@ -141,6 +146,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _currentUserEmail = null;
+    _currentUserRole = null;
     // Connect WebSocket Realtime channel for Web Admin Portal
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) {
@@ -193,6 +200,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final TextEditingController _loginEmailController = TextEditingController();
   final TextEditingController _loginPasswordController =
       TextEditingController();
+  final TextEditingController _driverPhoneLoginController =
+      TextEditingController();
 
   // Announcement controllers for broadcast
   final TextEditingController _announcementTitleController =
@@ -214,6 +223,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _chatReplyController.dispose();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
+    _driverPhoneLoginController.dispose();
     super.dispose();
   }
 
@@ -276,7 +286,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 950;
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: const Color(0xFFF8FAFC),
+      drawer: !isDesktop ? Drawer(child: SafeArea(child: _buildWebSidebar())) : null,
       appBar: _buildWebHeader(),
       body: Row(
         children: [
@@ -339,13 +351,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     if (_selectedPortalTab == 'Admin') {
       _selectedPortalTab = 'Doctor';
     }
+
+    String title = 'Nasiib $_selectedPortalTab Portal';
     String subtitle = 'Soo gal si aad ula xiriirto bukaanadaada iyo balamaha';
+    IconData icon = Icons.local_hospital_rounded;
+    Color iconColor = AppTheme.primaryColor;
+    Color iconBg = AppTheme.primaryLight;
+
     if (_selectedPortalTab == 'Pharmacy') {
       subtitle = 'Soo gal si aad u maamusho alaabta dawooyinka';
+      icon = Icons.local_pharmacy_rounded;
+    } else if (_selectedPortalTab == 'Driver') {
+      title = 'Nasiib Driver Portal';
+      subtitle = 'Geli nambarkaaga taleefanka si aad u gasho portal-ka darawalka';
+      icon = Icons.two_wheeler_rounded;
+      iconColor = const Color(0xFF15803D);
+      iconBg = const Color(0xFFDCFCE7);
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF475569), // Modern slate grey (cawl)
+      backgroundColor: const Color(0xFF475569), // Modern slate grey
       body: Center(
         child: SingleChildScrollView(
           child: Container(
@@ -370,18 +395,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryLight,
+                    color: iconBg,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.local_hospital_rounded,
-                    color: AppTheme.primaryColor,
+                  child: Icon(
+                    icon,
+                    color: iconColor,
                     size: 30,
                   ),
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Nasiib $_selectedPortalTab Portal',
+                  title,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -399,161 +424,304 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
                 const SizedBox(height: 28),
 
-                // Email Field
-                TextField(
-                  controller: _loginEmailController,
-                  style: GoogleFonts.plusJakartaSans(fontSize: 14),
-                  decoration: InputDecoration(
-                    labelText: 'Email Address',
-                    hintText: 'Enter your email',
-                    prefixIcon: const Icon(Icons.email_outlined, size: 20),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Password Field
-                TextField(
-                  controller: _loginPasswordController,
-                  obscureText: true,
-                  style: GoogleFonts.plusJakartaSans(fontSize: 14),
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    hintText: 'Enter password',
-                    prefixIcon: const Icon(
-                      Icons.lock_outline_rounded,
-                      size: 20,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Submit Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      final email = _loginEmailController.text
-                          .trim()
-                          .toLowerCase();
-                      final password = _loginPasswordController.text;
-
-                      if (email.isEmpty || password.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Please enter email and password!'),
-                          ),
-                        );
-                        return;
-                      }
-
-                      // Attempt Strict Supabase Authentication (NEW Supabase Project)
-                      final client = SupabaseService.instance.client;
-                      if (client != null &&
-                          SupabaseService.instance.isInitialized) {
-                        try {
-                          final res = await client.auth
-                              .signInWithPassword(
-                                email: email.trim(),
-                                password: password.trim(),
-                              )
-                              .timeout(const Duration(seconds: 8));
-
-                          if (res.user != null) {
-                            final user = res.user!;
-                            final appMeta = user.appMetadata;
-                            final userMeta = user.userMetadata;
-
-                            // 1. Active / Inactive check
-                            final bool isActive =
-                                (appMeta['is_active'] ??
-                                    userMeta?['is_active'] ??
-                                    true) ==
-                                true;
-                            if (!isActive) {
-                              await client.auth.signOut();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Account-kani waa uu xiran yahay (Inactive Account)',
-                                    ),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                              return;
-                            }
-
-                            // 2. Role Resolution via Supabase Auth Metadata & User Email
-                            String rawRole =
-                                (appMeta['role'] ?? userMeta?['role'] ?? '')
-                                    .toString()
-                                    .toLowerCase()
-                                    .trim();
-                            final emailLower = email.toLowerCase().trim();
-
-                            String role = 'Admin';
-                            if (rawRole == 'admin' ||
-                                emailLower == 'admin@nasiibhospital.com') {
-                              role = 'Admin';
-                            } else if (rawRole == 'pharmacy' ||
-                                emailLower == 'pharmacy@nasiib.com') {
-                              role = 'Pharmacy';
-                            } else if (rawRole == 'doctor' ||
-                                emailLower.contains('doctor') ||
-                                emailLower.contains('doc')) {
-                              role = 'Doctor';
-                            } else {
-                              if (emailLower.contains('admin')) {
-                                role = 'Admin';
-                              } else if (emailLower.contains('pharmacy')) {
-                                role = 'Pharmacy';
-                              } else {
-                                role = _selectedPortalTab;
-                              }
-                            }
-
-                            _loginAs(email.trim(), role);
-                            return;
-                          }
-                        } catch (e) {
-                          debugPrint("[LOGIN_ERROR] Supabase Auth error: $e");
-                        }
-                      }
-
-                      // If Supabase Auth fails or returns error -> DENY ACCESS IMMEDIATELY
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Email ama Password-ka waa khalad!'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryColor,
-                      shape: RoundedRectangleBorder(
+                if (_selectedPortalTab == 'Driver') ...[
+                  // Driver Phone Field
+                  TextField(
+                    controller: _driverPhoneLoginController,
+                    keyboardType: TextInputType.phone,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14),
+                    decoration: InputDecoration(
+                      labelText: 'Lambarka Taleefanka',
+                      hintText: 'e.g. 612949911 ama +252612949911',
+                      prefixIcon: const Icon(Icons.phone_rounded, size: 20, color: Color(0xFF15803D)),
+                      border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: Text(
-                      'Sign In',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        final rawPhone = _driverPhoneLoginController.text.trim();
+                        if (rawPhone.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Fadlan geli nambarkaaga taleefanka!'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          return;
+                        }
+
+                        String digits = rawPhone.replaceAll(RegExp(r'\D'), '');
+                        if (digits.startsWith('252') && digits.length >= 12) {
+                          digits = digits.substring(3);
+                        }
+                        if (digits.startsWith('0') && digits.length >= 10) {
+                          digits = digits.substring(1);
+                        }
+                        final vBase = digits;
+                        final vZero = '0$digits';
+                        final v252 = '252$digits';
+                        final vPlus252 = '+252$digits';
+                        final possibleFormats = [vBase, vZero, v252, vPlus252];
+
+                        try {
+                          final client = SupabaseService.instance.client;
+                          if (client != null && SupabaseService.instance.isInitialized) {
+                            final res = await client.from('drivers').select().eq('status', 'active');
+                            if (res is List && res.isNotEmpty) {
+                              final matched = res.firstWhereOrNull((d) {
+                                final ph = (d['phone'] ?? '').toString();
+                                return possibleFormats.any((fmt) => ph.contains(fmt));
+                              });
+
+                              if (matched != null) {
+                                final dName = (matched['name'] ?? matched['full_name'] ?? 'Darawal').toString();
+                                final dPhone = (matched['phone'] ?? matched['phone_number'] ?? rawPhone).toString();
+                                final prefs = await SharedPreferences.getInstance();
+                                await prefs.setString('logged_driver_phone', dPhone);
+                                await prefs.setString('logged_driver_name', dName);
+
+                                if (context.mounted) {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DriverPortalScreen(
+                                        initialDriver: Map<String, dynamic>.from(matched),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+                            }
+
+                            final userRes = await client.from('users').select().eq('role', 'driver');
+                            if (userRes is List && userRes.isNotEmpty) {
+                              final matchedUser = userRes.firstWhereOrNull((u) {
+                                final ph = (u['phone'] ?? u['phone_number'] ?? '').toString();
+                                return possibleFormats.any((fmt) => ph.contains(fmt));
+                              });
+                              if (matchedUser != null) {
+                                final dName = (matchedUser['full_name'] ?? matchedUser['name'] ?? 'Darawal').toString();
+                                final dPhone = (matchedUser['phone'] ?? matchedUser['phone_number'] ?? vPlus252).toString();
+                                final prefs = await SharedPreferences.getInstance();
+                                await prefs.setString('logged_driver_phone', dPhone);
+                                await prefs.setString('logged_driver_name', dName);
+
+                                final driverData = {
+                                  'id': matchedUser['id'],
+                                  'name': dName,
+                                  'phone': dPhone,
+                                  'status': 'active',
+                                };
+
+                                if (context.mounted) {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DriverPortalScreen(
+                                        initialDriver: driverData,
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+                            }
+                          }
+                        } catch (e) {
+                          debugPrint('Driver login error: $e');
+                        }
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Nambarkan "$rawPhone" kuma diiwaangashana darawallada active-ka ah.'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.login_rounded, color: Colors.white, size: 20),
+                      label: Text(
+                        'Gal Qaybta Darawalka',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF15803D),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ] else ...[
+                  // Email Field
+                  TextField(
+                    controller: _loginEmailController,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14),
+                    decoration: InputDecoration(
+                      labelText: 'Email Address',
+                      hintText: 'Enter your email',
+                      prefixIcon: const Icon(Icons.email_outlined, size: 20),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Password Field
+                  TextField(
+                    controller: _loginPasswordController,
+                    obscureText: true,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14),
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      hintText: 'Enter password',
+                      prefixIcon: const Icon(
+                        Icons.lock_outline_rounded,
+                        size: 20,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Submit Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final email = _loginEmailController.text
+                            .trim()
+                            .toLowerCase();
+                        final password = _loginPasswordController.text;
+
+                        if (email.isEmpty || password.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Please enter email and password!'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Attempt Strict Supabase Authentication (NEW Supabase Project)
+                        final client = SupabaseService.instance.client;
+                        if (client != null &&
+                            SupabaseService.instance.isInitialized) {
+                          try {
+                            final res = await client.auth
+                                .signInWithPassword(
+                                  email: email.trim(),
+                                  password: password.trim(),
+                                )
+                                .timeout(const Duration(seconds: 8));
+
+                            if (res.user != null) {
+                              final user = res.user!;
+                              final appMeta = user.appMetadata;
+                              final userMeta = user.userMetadata;
+
+                              // 1. Active / Inactive check
+                              final bool isActive =
+                                  (appMeta['is_active'] ??
+                                      userMeta?['is_active'] ??
+                                      true) ==
+                                  true;
+                              if (!isActive) {
+                                await client.auth.signOut();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Account-kani waa uu xiran yahay (Inactive Account)',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+
+                              // 2. Role Resolution via Supabase Auth Metadata & User Email
+                              String rawRole =
+                                  (appMeta['role'] ?? userMeta?['role'] ?? '')
+                                      .toString()
+                                      .toLowerCase()
+                                      .trim();
+                              final emailLower = email.toLowerCase().trim();
+
+                              String role = 'Admin';
+                              if (rawRole == 'admin' ||
+                                  emailLower == 'admin@nasiibhospital.com') {
+                                role = 'Admin';
+                              } else if (rawRole == 'pharmacy' ||
+                                  emailLower == 'pharmacy@nasiib.com') {
+                                role = 'Pharmacy';
+                              } else if (rawRole == 'doctor' ||
+                                  emailLower.contains('doctor') ||
+                                  emailLower.contains('doc')) {
+                                role = 'Doctor';
+                              } else {
+                                if (emailLower.contains('admin')) {
+                                  role = 'Admin';
+                                } else if (emailLower.contains('pharmacy')) {
+                                  role = 'Pharmacy';
+                                } else {
+                                  role = _selectedPortalTab;
+                                }
+                              }
+
+                              _loginAs(email.trim(), role);
+                              return;
+                            }
+                          } catch (e) {
+                            debugPrint("[LOGIN_ERROR] Supabase Auth error: $e");
+                          }
+                        }
+
+                        // If Supabase Auth fails or returns error -> DENY ACCESS IMMEDIATELY
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Email ama Password-ka waa khalad!'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Sign In',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 24),
 
                 _buildRoleSwitchLinks(),
@@ -566,56 +734,85 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildRoleSwitchLinks() {
-    if (_selectedPortalTab == 'Doctor' || _selectedPortalTab == 'Admin') {
-      return Column(
-        children: [
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedPortalTab = 'Pharmacy';
-                _loginEmailController.clear();
-                _loginPasswordController.clear();
-              });
-            },
-            child: Text(
-              'Waxaan ahay Farmashiye (Pharmacy Portal)',
-              style: GoogleFonts.plusJakartaSans(
-                color: const Color(0xFF0284C7),
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
+    final List<Widget> links = [];
+
+    if (_selectedPortalTab != 'Doctor') {
+      links.add(
+        TextButton.icon(
+          onPressed: () {
+            setState(() {
+              _selectedPortalTab = 'Doctor';
+              _loginEmailController.clear();
+              _loginPasswordController.clear();
+            });
+          },
+          icon: const Icon(Icons.medical_services_outlined, size: 16, color: Color(0xFF0284C7)),
+          label: Text(
+            'Waxaan ahay Dhaqtar (Doctor Portal)',
+            style: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF0284C7),
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
             ),
           ),
-        ],
-      );
-    } else {
-      return Column(
-        children: [
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedPortalTab = 'Doctor';
-                _loginEmailController.clear();
-                _loginPasswordController.clear();
-              });
-            },
-            child: Text(
-              'Waxaan ahay Dhaqtar (Doctor Portal)',
-              style: GoogleFonts.plusJakartaSans(
-                color: const Color(0xFF0284C7),
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
+        ),
       );
     }
+
+    if (_selectedPortalTab != 'Pharmacy') {
+      links.add(
+        TextButton.icon(
+          onPressed: () {
+            setState(() {
+              _selectedPortalTab = 'Pharmacy';
+              _loginEmailController.clear();
+              _loginPasswordController.clear();
+            });
+          },
+          icon: const Icon(Icons.local_pharmacy_outlined, size: 16, color: Color(0xFF0284C7)),
+          label: Text(
+            'Waxaan ahay Farmashiye (Pharmacy Portal)',
+            style: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF0284C7),
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_selectedPortalTab != 'Driver') {
+      links.add(
+        TextButton.icon(
+          onPressed: () {
+            setState(() {
+              _selectedPortalTab = 'Driver';
+              _driverPhoneLoginController.clear();
+            });
+          },
+          icon: const Icon(Icons.two_wheeler_rounded, size: 18, color: Color(0xFF15803D)),
+          label: Text(
+            'Waxaan ahay Darawal (Driver Portal)',
+            style: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF15803D),
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: links,
+    );
   }
 
   List<Map<String, dynamic>> _getAvailableNavItems() {
     final list = <Map<String, dynamic>>[];
-    if (_currentUserRole == 'Admin' || _currentUserRole == 'Doctor') {
+    final role = _currentUserRole ?? 'Admin';
+    if (role == 'Admin' || role == 'Doctor') {
       list.add({
         'index': 0,
         'title': 'Dashboard Overview',
@@ -632,7 +829,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'icon': Icons.calendar_month_rounded,
       });
     }
-    if (_currentUserRole == 'Admin' || _currentUserRole == 'Pharmacy') {
+    if (role == 'Admin' || role == 'Pharmacy') {
       list.add({
         'index': 4,
         'title': 'Pharmacy Catalog',
@@ -643,13 +840,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'title': 'Pharmacy Orders & Deliveries',
         'icon': Icons.shopping_bag_rounded,
       });
-    }
-    if (_currentUserRole == 'Admin' || _currentUserRole == 'Doctor') {
       list.add({
-        'index': 5,
-        'title': 'Messages & Chat',
-        'icon': Icons.chat_bubble_outline_rounded,
+        'index': 11,
+        'title': 'Driver Management',
+        'icon': Icons.delivery_dining_outlined,
       });
+    }
+    if (role == 'Admin' || role == 'Doctor') {
       list.add({
         'index': 8,
         'title': 'Broadcast Announcement',
@@ -660,17 +857,33 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'title': 'Nurse Management (Kalkaalisada)',
         'icon': Icons.medical_services_rounded,
       });
+      list.add({
+        'index': 12,
+        'title': 'Home Care',
+        'icon': Icons.home_work_rounded,
+      });
+      list.add({
+        'index': 5,
+        'title': 'Messages & Chat',
+        'icon': Icons.chat_bubble_outline_rounded,
+      });
     }
     return list;
   }
 
   // --- HEADER AND NAVIGATION ---
   PreferredSizeWidget _buildWebHeader() {
+    final isDesktop = MediaQuery.of(context).size.width > 950;
     return AppBar(
       backgroundColor: const Color(0xFFF0FDF4),
       elevation: 0,
-      leadingWidth: 0,
-      leading: const SizedBox.shrink(),
+      leadingWidth: !isDesktop ? 56 : 0,
+      leading: !isDesktop
+          ? IconButton(
+              icon: const Icon(Icons.menu_rounded, color: Color(0xFF065F46)),
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            )
+          : const SizedBox.shrink(),
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1.0),
         child: Container(
@@ -764,8 +977,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               },
             ),
           ),
-          const SizedBox(width: 16),
         ],
+        const SizedBox(width: 14),
         Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1041,9 +1254,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
       child: Column(
         children: [
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
           Expanded(
             child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 4),
               children: _getAvailableNavItems()
                   .where(
                     (item) => item['index'] != 5,
@@ -1052,12 +1266,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     final isSelected = _selectedAdminTab == item['index'];
                     return Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12.0,
-                        vertical: 2.0,
+                        horizontal: 10.0,
+                        vertical: 1.0,
                       ),
                       child: ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                         leading: Icon(
                           item['icon'],
+                          size: 20,
                           color: isSelected
                               ? const Color(0xFF15803D)
                               : const Color(0xFF334155),
@@ -1065,7 +1283,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         title: Text(
                           item['title'],
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: isSelected
                                 ? FontWeight.bold
                                 : FontWeight.w500,
@@ -1077,10 +1295,43 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         selected: isSelected,
                         selectedTileColor: const Color(0xFFDCFCE7),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        onTap: () =>
-                            setState(() => _selectedAdminTab = item['index']),
+                        trailing: item['index'] == 12
+                            ? StreamBuilder<List<Map<String, dynamic>>>(
+                                stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
+                                    ? SupabaseService.instance.client!.from('nurse_orders').stream(primaryKey: ['id'])
+                                    : const Stream.empty(),
+                                builder: (context, snapshot) {
+                                  final pending = (snapshot.data ?? []).where((o) {
+                                    final st = (o['status'] ?? o['order_status'] ?? 'pending').toString().toLowerCase();
+                                    return st == 'pending';
+                                  }).length;
+                                  if (pending == 0) return const SizedBox.shrink();
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEF4444),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$pending',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              )
+                            : null,
+                        onTap: () {
+                          setState(() => _selectedAdminTab = item['index']);
+                          if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+                            Navigator.of(context).pop();
+                          }
+                        },
                       ),
                     );
                   })
@@ -1123,14 +1374,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 final isSelected = _selectedAdminTab == 5;
                 return Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12.0,
-                    vertical: 2.0,
+                    horizontal: 10.0,
+                    vertical: 1.0,
                   ),
                   child: ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                     leading: Icon(
                       isSelected
                           ? Icons.chat_bubble_rounded
                           : Icons.chat_bubble_outline_rounded,
+                      size: 20,
                       color: isSelected
                           ? const Color(0xFF15803D)
                           : const Color(0xFF334155),
@@ -1140,7 +1395,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         Text(
                           'Messages',
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: isSelected
                                 ? FontWeight.bold
                                 : FontWeight.w500,
@@ -1153,8 +1408,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
+                              horizontal: 6,
+                              vertical: 2,
                             ),
                             decoration: BoxDecoration(
                               color: isSelected
@@ -1177,9 +1432,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     selected: isSelected,
                     selectedTileColor: const Color(0xFFDCFCE7),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    onTap: () => setState(() => _selectedAdminTab = 5),
+                    onTap: () {
+                      setState(() => _selectedAdminTab = 5);
+                      if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+                        Navigator.of(context).pop();
+                      }
+                    },
                   ),
                 );
               },
@@ -1189,24 +1449,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           // Logout button explicitly positioned at the bottom of the sidebar
           Padding(
             padding: const EdgeInsets.symmetric(
-              horizontal: 12.0,
-              vertical: 4.0,
+              horizontal: 10.0,
+              vertical: 1.0,
             ),
             child: ListTile(
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
               leading: const Icon(
                 Icons.logout_rounded,
+                size: 20,
                 color: Color(0xFFEF4444),
               ),
               title: Text(
                 'Logout',
                 style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.bold,
                   color: const Color(0xFFEF4444),
                 ),
               ),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
               ),
               onTap: _logout,
             ),
@@ -1265,6 +1529,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return _buildNursesTab(context);
       case 10:
         return _buildPharmacyOrderPanel(context);
+      case 11:
+        return _buildDriverManagementView(context);
+      case 12:
+        return _buildHomeCareTab(context);
       default:
         return const Center(child: Text('Page not found.'));
     }
@@ -1485,70 +1753,158 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- KPI CARDS ROW (Pending Appointments Removed as requested) ---
+  // --- KPI CARDS ROW (Realtime Pharmacy & Revenue Metrics) ---
   Widget _buildCarePlusKpiCardsRow(AppState appState) {
-    final Set<String> uniquePatientIdentifiers = {};
-    for (final p in appState.dbPatients) {
-      final name = p['full_name'] ?? p['name'] ?? '';
-      final phone = p['phone_number'] ?? p['phone'] ?? '';
-      if (name.toString().trim().isNotEmpty) {
-        uniquePatientIdentifiers.add(name.toString().trim());
-      } else if (phone.toString().trim().isNotEmpty) {
-        uniquePatientIdentifiers.add(phone.toString().trim());
-      }
-    }
-    for (final apt in appState.appointments) {
-      if (apt.patientName.trim().isNotEmpty) {
-        uniquePatientIdentifiers.add(apt.patientName.trim());
-      } else if (apt.patientPhone.trim().isNotEmpty) {
-        uniquePatientIdentifiers.add(apt.patientPhone.trim());
-      }
-    }
-    final int totalPatientsCount = uniquePatientIdentifiers.isNotEmpty
-        ? uniquePatientIdentifiers.length
-        : (appState.dbPatients.isNotEmpty
-              ? appState.dbPatients.length
-              : appState.appointments.length);
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
+          ? SupabaseService.instance.client!.from('orders').stream(primaryKey: ['id'])
+          : const Stream.empty(),
+      builder: (context, snapshot) {
+        final List<Map<String, dynamic>> orders = (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty)
+            ? snapshot.data!
+            : appState.orders;
 
-    return Row(
-      children: [
-        Expanded(
-          child: _buildCarePlusStatCard(
-            title: 'Total Patients',
-            value: '$totalPatientsCount',
-            change: '↗ Live',
-            subtext: 'Registered patients',
-            icon: Icons.people_outline_rounded,
-            iconColor: const Color(0xFF6366F1),
-            bgColor: const Color(0xFFEEF2FF),
-          ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: _buildCarePlusStatCard(
-            title: 'Total Doctors',
-            value: '${appState.doctors.length}',
-            change: '↗ Live',
-            subtext: 'Active doctor roster',
-            icon: Icons.badge_outlined,
-            iconColor: const Color(0xFF10B981),
-            bgColor: const Color(0xFFECFDF5),
-          ),
-        ),
+        final now = DateTime.now();
+        final todayStr = DateFormat('yyyy-MM-dd').format(now);
 
-        const SizedBox(width: 14),
-        Expanded(
-          child: _buildCarePlusStatCard(
-            title: 'Active Chats',
-            value: '${appState.conversations.length}',
-            change: '↗ Live',
-            subtext: 'Doctor-Patient threads',
-            icon: Icons.chat_bubble_outline_rounded,
-            iconColor: const Color(0xFF8B5CF6),
-            bgColor: const Color(0xFFF5F3FF),
-          ),
-        ),
-      ],
+        int todaysOrdersCount = 0;
+        double todaysRevenueSum = 0.0;
+        int totalOrdersCount = orders.length;
+
+        for (final o in orders) {
+          final createdAt = o['created_at']?.toString() ?? o['date']?.toString() ?? '';
+          final status = (o['status'] ?? '').toString();
+          final rawAmount = o['total_amount'] ?? o['total'] ?? o['amount'];
+          final totalAmount = (rawAmount as num?)?.toDouble() ??
+                              (double.tryParse(rawAmount?.toString() ?? '') ?? 0.0);
+
+          bool isToday = false;
+          if (createdAt.isNotEmpty) {
+            if (createdAt.contains(todayStr)) {
+              isToday = true;
+            } else {
+              try {
+                final dt = DateTime.parse(createdAt).toLocal();
+                if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+                  isToday = true;
+                }
+              } catch (_) {}
+            }
+          }
+
+          if (isToday) {
+            todaysOrdersCount++;
+            if (!status.toLowerCase().contains('cancel')) {
+              todaysRevenueSum += totalAmount;
+            }
+          }
+        }
+
+        final formattedRevenue = todaysRevenueSum.toStringAsFixed(2);
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 700;
+            final isTablet = constraints.maxWidth >= 700 && constraints.maxWidth < 1100;
+
+            final card1 = _buildCarePlusStatCard(
+              title: 'Dalabaadka Maanta (Dawooyinka)',
+              value: '$todaysOrdersCount',
+              change: '↗ Live',
+              subtext: 'Dalab dawo maanta la helay',
+              icon: Icons.shopping_bag_outlined,
+              iconColor: const Color(0xFF6366F1),
+              bgColor: const Color(0xFFEEF2FF),
+            );
+
+            final card2 = _buildCarePlusStatCard(
+              title: 'Dakhliga Dawooyinka (Maanta)',
+              value: '\$$formattedRevenue USD',
+              change: '↗ Live',
+              subtext: 'Dakhliga iibka dawooyinka',
+              icon: Icons.attach_money_rounded,
+              iconColor: const Color(0xFF10B981),
+              bgColor: const Color(0xFFECFDF5),
+              showSparkline: true,
+            );
+
+            final card3 = _buildCarePlusStatCard(
+              title: 'Dalabaadka Guud (Dawooyinka)',
+              value: '$totalOrdersCount',
+              change: '↗ Live',
+              subtext: 'Wadarta dalabaadka dawooyinka',
+              icon: Icons.assignment_rounded,
+              iconColor: const Color(0xFF8B5CF6),
+              bgColor: const Color(0xFFF5F3FF),
+            );
+
+            final card4 = StreamBuilder<List<Map<String, dynamic>>>(
+              stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
+                  ? SupabaseService.instance.client!.from('nurse_orders').stream(primaryKey: ['id'])
+                  : const Stream.empty(),
+              builder: (context, nurseSnap) {
+                final nurseList = nurseSnap.data ?? [];
+                final pendingCount = nurseList.where((o) => (o['status'] ?? o['order_status'] ?? '').toString().toLowerCase() == 'pending').length;
+                return _buildCarePlusStatCard(
+                  title: 'Home Care Requests',
+                  value: '${nurseList.length}',
+                  change: '$pendingCount Pending',
+                  subtext: 'Active Nurse Orders',
+                  icon: Icons.home_work_rounded,
+                  iconColor: const Color(0xFF059669),
+                  bgColor: const Color(0xFFD1FAE5),
+                );
+              },
+            );
+
+            if (isMobile) {
+              return Column(
+                children: [
+                  card1,
+                  const SizedBox(height: 12),
+                  card2,
+                  const SizedBox(height: 12),
+                  card3,
+                  const SizedBox(height: 12),
+                  card4,
+                ],
+              );
+            } else if (isTablet) {
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: card1),
+                      const SizedBox(width: 14),
+                      Expanded(child: card2),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: card3),
+                      const SizedBox(width: 14),
+                      Expanded(child: card4),
+                    ],
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(child: card1),
+                const SizedBox(width: 14),
+                Expanded(child: card2),
+                const SizedBox(width: 14),
+                Expanded(child: card3),
+                const SizedBox(width: 14),
+                Expanded(child: card4),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1560,6 +1916,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required IconData icon,
     required Color iconColor,
     required Color bgColor,
+    bool showSparkline = false,
   }) {
     return Container(
       padding: const EdgeInsets.all(18),
@@ -1578,14 +1935,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              if (showSparkline)
+                SizedBox(
+                  width: 84,
+                  height: 38,
+                  child: CustomPaint(
+                    painter: SparklineChartPainter(color: iconColor),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 14),
           Text(
@@ -1599,18 +1969,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           const SizedBox(height: 4),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
-
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(
-                value,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
+              Expanded(
+                child: Text(
+                  value,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF0F172A),
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -1777,154 +2149,324 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- RECENT ACTIVITIES CARD (Dynamic from Supabase Events) ---
+  // --- DAWOOYINKA LA GADAY (SOLD MEDICINES CARD) ---
   Widget _buildRecentActivitiesCard(AppState appState) {
-    final activities = <Map<String, dynamic>>[];
+    final client = SupabaseService.instance.client;
+    final bool canStream = client != null && SupabaseService.instance.isInitialized;
 
-    // Collect latest patients
-    for (var p in appState.dbPatients.take(2)) {
-      activities.add({
-        'title': 'New patient registered',
-        'sub': p['full_name'] ?? p['name'] ?? 'Patient',
-        'time': p['created_at'] != null
-            ? DateFormat('hh:mm a').format(
-                DateTime.tryParse(p['created_at'].toString()) ?? DateTime.now(),
-              )
-            : 'Recently',
-        'icon': Icons.person_add_alt_1_rounded,
-        'color': const Color(0xFF8B5CF6),
-        'bg': const Color(0xFFF5F3FF),
-      });
-    }
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: canStream
+          ? client.from('orders').stream(primaryKey: ['id']).order('created_at', ascending: false)
+          : const Stream.empty(),
+      builder: (context, snapshot) {
+        final List<Map<String, dynamic>> orders = (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty)
+            ? snapshot.data!
+            : appState.orders;
 
-    // Collect latest appointments
-    for (var a in appState.appointments.take(2)) {
-      activities.add({
-        'title': 'Appointment booked',
-        'sub': '${a.patientName} with ${a.doctorName}',
-        'time': a.time.isNotEmpty ? a.time : 'Today',
-        'icon': Icons.calendar_today_rounded,
-        'color': const Color(0xFF10B981),
-        'bg': const Color(0xFFECFDF5),
-      });
-    }
+        final allItems = appState.orderItems;
+        final soldItems = <Map<String, dynamic>>[];
 
-    // Collect latest chat messages
-    for (var m in appState.chatMessages.take(1)) {
-      activities.add({
-        'title': 'New message received',
-        'sub': 'From ${m['sender_name'] ?? 'Patient'}',
-        'time': 'Just now',
-        'icon': Icons.chat_bubble_outline_rounded,
-        'color': const Color(0xFFEF4444),
-        'bg': const Color(0xFFFEF2F2),
-      });
-    }
+        for (var order in orders) {
+          final orderId = order['id']?.toString() ?? '';
+          final patientName = (order['patient_name'] ?? order['customer_name'] ?? order['user_name'] ?? order['full_name'] ?? 'Bukaan').toString();
+          final createdAtRaw = order['created_at']?.toString() ?? order['date']?.toString();
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      height: 380,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Recent Activities',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-            ],
+          String formattedTime = 'Maanta';
+          if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
+            try {
+              final dt = DateTime.parse(createdAtRaw).toLocal();
+              formattedTime = DateFormat('hh:mm a').format(dt);
+            } catch (_) {
+              formattedTime = 'Recently';
+            }
+          }
+
+          final matchingItems = allItems.where((i) => i['order_id']?.toString() == orderId).toList();
+
+          if (matchingItems.isNotEmpty) {
+            for (var item in matchingItems) {
+              final medName = (item['medicine_name'] ?? item['name'] ?? item['title'] ?? 'Dawo').toString();
+              final qty = item['quantity'] ?? item['qty'] ?? 1;
+              final priceVal = item['price'] ?? item['unit_price'] ?? item['total_price'] ?? order['total_amount'] ?? order['total'] ?? 0;
+              final double parsedPrice = double.tryParse(priceVal.toString()) ?? 0.0;
+
+              soldItems.add({
+                'order_id': orderId,
+                'name': medName,
+                'patient': patientName,
+                'qty': qty,
+                'price': parsedPrice > 0 ? '\$${parsedPrice.toStringAsFixed(2)}' : '',
+                'time': formattedTime,
+              });
+            }
+          } else {
+            // Fallback for orders without separate order_items rows
+            final rawSummary = order['items_summary'] ?? order['items'] ?? order['medicines'] ?? order['description'] ?? 'Dalab Dawo';
+            String itemsSummary = rawSummary.toString();
+            if (itemsSummary.startsWith('[') && itemsSummary.endsWith(']')) {
+              itemsSummary = 'Dalab Dawo';
+            }
+
+            final rawTotal = order['total_amount'] ?? order['total_price'] ?? order['total'] ?? order['amount'] ?? 0;
+            final double parsedTotal = double.tryParse(rawTotal.toString()) ?? 0.0;
+
+            soldItems.add({
+              'order_id': orderId,
+              'name': itemsSummary.isNotEmpty ? itemsSummary : 'Dalab Dawo',
+              'patient': patientName,
+              'qty': 1,
+              'price': parsedTotal > 0 ? '\$${parsedTotal.toStringAsFixed(2)}' : '',
+              'time': formattedTime,
+            });
+          }
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(24),
+          height: 380,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: activities.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.history_rounded,
-                          size: 36,
-                          color: Color(0xFFCBD5E1),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Dawooyinka La Gaday',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDCFCE7),
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'No recent activities',
+                        child: Text(
+                          '${soldItems.length} Iib',
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12,
-                            color: const Color(0xFF94A3B8),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF15803D),
+                          ),
+                        ),
+                      ),
+                      if (soldItems.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Tooltip(
+                          message: 'Tirtir Dhamaan Dawooyinka La Gaday',
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: Text('Tirtir Dhamaan Dawooyinka', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold)),
+                                  content: Text('Ma ziirtaa inaad tirtirto dhammaan iibka dawooyinkan ku muuqda kaardka?', style: GoogleFonts.plusJakartaSans()),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, false),
+                                      child: Text('Kanoo maaha', style: GoogleFonts.plusJakartaSans(color: const Color(0xFF64748B))),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      child: Text('Haa, Tirtir Dhamaan', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                final client = SupabaseService.instance.client;
+                                if (client != null) {
+                                  try {
+                                    await client.from('order_items').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                                  } catch (_) {}
+                                  try {
+                                    await client.from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                                  } catch (_) {}
+                                }
+                                appState.orders.clear();
+                                appState.orderItems.clear();
+                                appState.notifyListeners();
+                              }
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.delete_sweep_rounded,
+                                color: Colors.red.shade400,
+                                size: 18,
+                              ),
+                            ),
                           ),
                         ),
                       ],
-                    ),
-                  )
-                : ListView.separated(
-                    itemCount: activities.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final act = activities[index];
-                      return Row(
-                        children: [
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: act['bg'] as Color,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(
-                              act['icon'] as IconData,
-                              color: act['color'] as Color,
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  act['title'] as String,
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: const Color(0xFF0F172A),
-                                  ),
-                                ),
-                                Text(
-                                  act['sub'] as String,
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 11,
-                                    color: const Color(0xFF64748B),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            act['time'] as String,
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 10,
-                              color: const Color(0xFF94A3B8),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                    ],
                   ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: soldItems.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.medication_liquid_rounded,
+                              size: 36,
+                              color: Color(0xFFCBD5E1),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Weli ma jiro dawooyin la gaday',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                color: const Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: soldItems.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final item = soldItems[index];
+                          final targetOrderId = item['order_id']?.toString() ?? '';
+
+                          return Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFECFDF5),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.medication_rounded,
+                                  color: Color(0xFF10B981),
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item['name'] as String,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: const Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${item['patient']} • ${item['qty']} xabo',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        color: const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  if ((item['price'] as String).isNotEmpty)
+                                    Text(
+                                      item['price'] as String,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: const Color(0xFF15803D),
+                                      ),
+                                    ),
+                                  Text(
+                                    item['time'] as String,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 10,
+                                      color: const Color(0xFF94A3B8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 6),
+                              Tooltip(
+                                message: 'Tirtir iibkan',
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(6),
+                                  onTap: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        title: Text('Tirtir Daawada/Dalabka', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold)),
+                                        content: Text('Ma ziirtaa inaad tirtirto iibkan daawada ah?', style: GoogleFonts.plusJakartaSans()),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(ctx, false),
+                                            child: Text('Kanoo maaha', style: GoogleFonts.plusJakartaSans(color: const Color(0xFF64748B))),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+                                            onPressed: () => Navigator.pop(ctx, true),
+                                            child: Text('Haa, Tirtir', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+
+                                    if (confirm == true && targetOrderId.isNotEmpty) {
+                                      final client = SupabaseService.instance.client;
+                                      if (client != null) {
+                                        try {
+                                          await client.from('order_items').delete().eq('order_id', targetOrderId);
+                                        } catch (_) {}
+                                        try {
+                                          await client.from('orders').delete().eq('id', targetOrderId);
+                                        } catch (_) {}
+                                      }
+                                      appState.orders.removeWhere((o) => o['id']?.toString() == targetOrderId);
+                                      appState.notifyListeners();
+                                    }
+                                  },
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4.0),
+                                    child: Icon(
+                                      Icons.delete_outline_rounded,
+                                      color: Color(0xFFEF4444),
+                                      size: 17,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -3044,6 +3586,215 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             );
           },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHomeCareTab(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Home Care Services & Nurse Orders',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Real-time nurse dispatch orders & home health visits',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+
+        Expanded(
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
+                ? SupabaseService.instance.client!
+                    .from('nurse_orders')
+                    .stream(primaryKey: ['id'])
+                    .order('created_at', ascending: false)
+                : Stream.value([]),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final orders = snapshot.data ?? [];
+
+              if (orders.isEmpty) {
+                return Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(32),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.home_repair_service_rounded,
+                          size: 48,
+                          color: AppTheme.textSecondary,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No Home Care Orders Found',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Home care nurse bookings will appear here automatically in real-time.',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columnSpacing: 24,
+                    horizontalMargin: 20,
+                    headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+                    columns: [
+                      DataColumn(label: Text('Patient Name', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Phone', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Service Requested', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Location / Address', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Fee', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Payment', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Order Status', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Actions', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: orders.map((o) {
+                      final orderId = (o['id'] ?? o['booking_id'] ?? '').toString();
+                      final patientName = (o['patient_name'] ?? o['customer_name'] ?? o['full_name'] ?? o['name'] ?? 'Patient').toString();
+                      final phone = (o['phone'] ?? o['patient_phone'] ?? o['phoneNumber'] ?? o['contact_phone'] ?? '').toString();
+                      final nurseName = (o['nurse_name'] ?? o['service_type'] ?? o['doctor_name'] ?? 'Home Care Nurse').toString();
+                      final district = (o['district'] ?? '').toString();
+                      final address = (o['address'] ?? o['delivery_address'] ?? o['neighborhood'] ?? (district.isNotEmpty ? '$district, Mogadishu' : 'Mogadishu')).toString();
+                      final fee = (o['fee'] ?? o['total_amount'] ?? o['amount'] ?? 0.0).toString();
+                      final paymentStatus = (o['payment_status'] ?? o['paymentStatus'] ?? 'Paid').toString();
+                      final status = (o['status'] ?? o['order_status'] ?? 'Pending').toString();
+
+                      return DataRow(
+                        cells: [
+                          DataCell(Text(patientName, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600))),
+                          DataCell(Text(phone.isNotEmpty ? phone : 'N/A', style: GoogleFonts.plusJakartaSans())),
+                          DataCell(
+                            Row(
+                              children: [
+                                const Icon(Icons.medical_services_outlined, size: 16, color: AppTheme.primaryColor),
+                                const SizedBox(width: 6),
+                                Text('Nurse ($nurseName)', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          ),
+                          DataCell(Text(address, style: GoogleFonts.plusJakartaSans())),
+                          DataCell(Text('\$$fee', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold))),
+                          DataCell(
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: paymentStatus == 'Paid' ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                paymentStatus,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: paymentStatus == 'Paid' ? const Color(0xFF15803D) : const Color(0xFFD97706),
+                                ),
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            DropdownButton<String>(
+                              value: ['Pending', 'In Progress', 'Completed', 'Cancelled'].contains(status) ? status : 'Pending',
+                              underline: const SizedBox(),
+                              items: ['Pending', 'In Progress', 'Completed', 'Cancelled']
+                                  .map((st) => DropdownMenuItem(
+                                        value: st,
+                                        child: Text(st, style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w600)),
+                                      ))
+                                  .toList(),
+                              onChanged: (newStatus) async {
+                                if (newStatus != null && SupabaseService.instance.client != null) {
+                                  try {
+                                    await SupabaseService.instance.client!
+                                        .from('nurse_orders')
+                                        .update({'status': newStatus})
+                                        .eq('id', orderId);
+
+                                    // Trigger FCM push notification to user device
+                                    FcmSender().sendTopicNotification(
+                                      topic: 'nasiib_orders',
+                                      title: 'Nasiib Home Care Update',
+                                      body: 'Status-ka dalabkaaga Kalkaalisada waa la cusbooneysiiyay!',
+                                    );
+                                  } catch (e) {
+                                    debugPrint('Error updating nurse order status: $e');
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                          DataCell(
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                              onPressed: () async {
+                                if (SupabaseService.instance.client != null) {
+                                  await SupabaseService.instance.client!
+                                      .from('nurse_orders')
+                                      .delete()
+                                      .eq('id', orderId);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ],
     );
@@ -5874,7 +6625,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   vertical: 12,
                 ),
               ),
-              onPressed: () {
+              onPressed: () async {
                 final val1 = double.tryParse(priceCtrl.text.trim()) ?? 0.0;
                 final val2 = double.tryParse(originalPriceCtrl.text.trim());
 
@@ -5912,13 +6663,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   description: descCtrl.text,
                 );
 
-                context.read<AppState>().updateMedicine(updatedMed);
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Medicine details updated successfully!'),
-                  ),
-                );
+                await context.read<AppState>().updateMedicine(updatedMed);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Medicine details updated successfully!'),
+                    ),
+                  );
+                }
               },
               child: Text(
                 'Save Changes',
@@ -6281,7 +7034,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             } catch (_) {}
           }
 
-          activeChatsMap[pId] = {
+          final chatKey = pName.isNotEmpty ? pName.toLowerCase().trim() : pId.toLowerCase().trim();
+
+          activeChatsMap[chatKey] = {
             'patientId': pId,
             'patientName': pName,
             'lastMsg': lastText,
@@ -6291,11 +7046,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
         // Include any appointments if not yet in chat map
         for (var apt in bookings) {
-          final key = apt.id.isNotEmpty ? apt.id : apt.patientName;
-          if (!activeChatsMap.containsKey(key) && !activeChatsMap.containsKey(apt.patientName)) {
-            activeChatsMap[key] = {
-              'patientId': key,
-              'patientName': apt.patientName,
+          final pName = apt.patientName.trim();
+          final chatKey = pName.isNotEmpty ? pName.toLowerCase() : apt.id.toLowerCase();
+          if (!activeChatsMap.containsKey(chatKey)) {
+            activeChatsMap[chatKey] = {
+              'patientId': apt.id.isNotEmpty ? apt.id : pName,
+              'patientName': pName,
               'lastMsg': 'Tap to start conversation.',
               'time': '',
             };
@@ -6391,13 +7147,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               .toList();
 
                           int unreadCount = 0;
-                          final isDismissed = _lastSeenMessageIds[patientName] == 'READ' || _lastSeenMessageIds[patientId] == 'READ';
+                          final isDismissed = _lastSeenMessageIds[patientName] == 'READ' || 
+                                              _lastSeenMessageIds[patientId] == 'READ' ||
+                                              _lastSeenMessageIds[patientName.toLowerCase()] == 'READ';
 
                           if (!isSelected && !isDismissed) {
                             unreadCount = patientMsgs.where((m) => m['is_read'] != true).length;
-                            if (unreadCount == 0 && patientMsgs.isNotEmpty) {
-                              unreadCount = 1;
-                            }
                           }
 
                           return ListTile(
@@ -6426,38 +7181,106 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     : AppTheme.textSecondary,
                               ),
                             ),
-                            trailing: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.end,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  chat['time'] ?? '',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.textLight,
-                                  ),
-                                ),
-                                if (unreadCount > 0 && !isSelected) ...[
-                                  const SizedBox(height: 4),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFEF4444),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      '$unreadCount',
-                                      style: GoogleFonts.plusJakartaSans(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
+                                Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      chat['time'] ?? '',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.textLight,
                                       ),
                                     ),
+                                    if (unreadCount > 0 && !isSelected) ...[
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFEF4444),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          '$unreadCount',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: Color(0xFFEF4444),
+                                    size: 18,
                                   ),
-                                ],
+                                  tooltip: 'Tirtir Wada-sheekaysiga',
+                                  onPressed: () {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        title: Row(
+                                          children: [
+                                            const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                                            const SizedBox(width: 8),
+                                            const Text('Tirtir Wada-sheekaysiga'),
+                                          ],
+                                        ),
+                                        content: Text(
+                                          'Ma ziirtaa inaad si joogto ah u tirtirto wada-sheekaysiga bukaanka ($patientName)?',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(ctx),
+                                            child: const Text('Kansal'),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.red,
+                                            ),
+                                            onPressed: () async {
+                                              Navigator.pop(ctx);
+                                              await appState.clearPatientChatHistory(patientId, patientName);
+                                              if (_selectedChatPatientName == patientName || _selectedChatPatientId == patientId) {
+                                                setState(() {
+                                                  _selectedChatPatient = null;
+                                                  _selectedChatPatientName = null;
+                                                  _selectedChatPatientId = null;
+                                                });
+                                              }
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('Wada-sheekaysigii bukaanka waa la tirtiray!'),
+                                                    backgroundColor: Colors.red,
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                            child: const Text(
+                                              'Haa, Tirtir',
+                                              style: TextStyle(color: Colors.white),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
                               ],
                             ),
                             onTap: () async {
@@ -6466,6 +7289,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
                               _lastSeenMessageIds[pName] = 'READ';
                               _lastSeenMessageIds[pId] = 'READ';
+                              _lastSeenMessageIds[pName.toLowerCase()] = 'READ';
 
                               final client = SupabaseService.instance.client;
                               if (client != null && SupabaseService.instance.isInitialized) {
@@ -6474,9 +7298,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                 } catch (_) {}
                               }
 
-                              if (patientMsgs.isNotEmpty) {
-                                _lastSeenMessageIds[pName] = patientMsgs.last['id']?.toString() ?? '';
-                              }
                               appState.markChatAsRead(pName);
                               final docId = appState.getLoggedInDoctorId(
                                 _currentUserRole ?? 'Doctor',
@@ -6700,8 +7521,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                           decoration: BoxDecoration(
                                             color: isImage
                                                 ? Colors.transparent
-                                                : (isAdm ? Colors.teal.shade700 : Colors.teal.shade50),
+                                                : (isAdm ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9)),
                                             borderRadius: BorderRadius.circular(12),
+                                            border: isImage
+                                                ? null
+                                                : Border.all(
+                                                    color: isAdm
+                                                        ? const Color(0xFF86EFAC).withOpacity(0.5)
+                                                        : const Color(0xFFE2E8F0),
+                                                  ),
                                             boxShadow: isImage
                                                 ? []
                                                 : [
@@ -6725,9 +7553,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                               : Text(
                                                   text,
                                                   style: GoogleFonts.plusJakartaSans(
-                                                    color: isAdm ? Colors.white : Colors.black87,
+                                                    color: isAdm ? const Color(0xFF14532D) : const Color(0xFF1E293B),
                                                     fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
+                                                    fontWeight: FontWeight.w600,
                                                   ),
                                                 ),
                                         ),
@@ -8133,12 +8961,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final patientName = order['patient_name']?.toString() ?? 'Patient';
     final phone = order['patient_phone']?.toString() ?? '';
     final city = order['city']?.toString() ?? 'Mogadishu';
-    final district = order['district']?.toString() ?? 'Hodan';
+    String rawDistrict = order['district']?.toString() ?? '';
+    if (rawDistrict.isEmpty || rawDistrict == 'Medicines & Skincare' || rawDistrict == 'Pharmacy') {
+      final addr = (order['delivery_address'] ?? order['address'] ?? order['notes'] ?? '').toString();
+      if (addr.contains(',')) {
+        final parts = addr.split(',');
+        if (parts.length >= 2) {
+          rawDistrict = parts[parts.length - 2].trim();
+        } else if (parts.isNotEmpty) {
+          rawDistrict = parts[0].trim();
+        }
+      }
+    }
+    if (rawDistrict.isEmpty || rawDistrict == 'Medicines & Skincare' || rawDistrict == 'Pharmacy') {
+      rawDistrict = 'Hodan';
+    }
+    final district = rawDistrict;
     final address = order['delivery_address']?.toString() ?? '';
-    final subtotal = (order['subtotal'] as num?)?.toDouble() ?? 0.0;
-    final deliveryFee = (order['delivery_fee'] as num?)?.toDouble() ?? 2.0;
     final total =
-        (order['total_amount'] as num?)?.toDouble() ?? (subtotal + deliveryFee);
+        (order['total_amount'] as num?)?.toDouble() ?? 0.0;
+    final rawSubtotal = (order['subtotal'] as num?)?.toDouble();
+    final subtotal = (rawSubtotal != null && rawSubtotal > 0) ? rawSubtotal : total;
+    final deliveryFee = (order['delivery_fee'] as num?)?.toDouble() ?? 0.0;
     final payMethod = order['payment_method']?.toString() ?? 'EVC Plus';
     final payStatus = order['payment_status']?.toString() ?? 'Paid';
 
@@ -8385,7 +9229,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Subtotal',
+                        'Subtotal (Dawooyinka)',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 13,
                           color: AppTheme.textSecondary,
@@ -8393,10 +9237,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       Text(
                         '\$${subtotal.toStringAsFixed(2)}',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 13),
+                        style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -8408,8 +9253,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ),
                       ),
                       Text(
-                        '\$${deliveryFee.toStringAsFixed(2)}',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 13),
+                        deliveryFee > 0
+                            ? '\$${deliveryFee.toStringAsFixed(2)}'
+                            : '\$0.00 (Bilaash)',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: deliveryFee == 0 ? FontWeight.bold : FontWeight.normal,
+                          color: deliveryFee == 0 ? const Color(0xFF10B981) : AppTheme.textPrimary,
+                        ),
                       ),
                     ],
                   ),
@@ -8511,24 +9362,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           style: TextStyle(fontSize: 12),
                         ),
                       ),
-                      ElevatedButton(
+                      ElevatedButton.icon(
                         onPressed: canOutForDelivery
                             ? () {
-                                context.read<AppState>().updateOrderStatus(
-                                  orderId,
-                                  'Out for Delivery',
-                                );
                                 Navigator.pop(dialogCtx);
+                                _showDriverDispatchDialog(context, order);
                               }
                             : null,
+                        icon: const Icon(Icons.two_wheeler_rounded, size: 16, color: Colors.white),
+                        label: const Text(
+                          'Out for Delivery (Qoondee)',
+                          style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange.shade800,
+                          backgroundColor: const Color(0xFF15803D),
                           disabledBackgroundColor: Colors.grey.shade300,
                           disabledForegroundColor: Colors.grey.shade600,
-                        ),
-                        child: const Text(
-                          'Out for Delivery',
-                          style: TextStyle(fontSize: 12),
                         ),
                       ),
                       ElevatedButton(
@@ -8576,6 +9425,805 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+  void _showDriverDispatchDialog(BuildContext context, Map<String, dynamic> order) async {
+    final orderId = order['id']?.toString() ?? '';
+    final orderNum = order['order_number']?.toString() ?? '#ORD';
+
+    List<Map<String, dynamic>> drivers = [];
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        final res = await client.from('drivers').select().eq('status', 'active');
+        if (res is List && res.isNotEmpty) {
+          drivers = List<Map<String, dynamic>>.from(res);
+        }
+      }
+    } catch (_) {}
+
+    Map<String, dynamic>? selectedDriver = drivers.isNotEmpty ? drivers.first : null;
+
+    if (!context.mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (dispatchCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.two_wheeler_rounded, color: Color(0xFF15803D)),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Qoondee Darawal ($orderNum)',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: drivers.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Text(
+                          'Majiraan darawallo diiwaangashan oo active ah. Fadlan marka hore darawal ka diiwaangeli "Driver Management".',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            color: Colors.red.shade700,
+                          ),
+                        ),
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Fadlan ka dooro darawalka gaarsiinaya daawada bukaan-ka:',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          DropdownButtonFormField<Map<String, dynamic>>(
+                            value: selectedDriver,
+                            isExpanded: true,
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                            items: drivers.map((driver) {
+                              final dName = (driver['name'] ?? driver['full_name'] ?? 'Darawal').toString();
+                              final dPhone = (driver['phone'] ?? driver['phone_number'] ?? '').toString();
+                              return DropdownMenuItem<Map<String, dynamic>>(
+                                value: driver,
+                                child: Text(
+                                  '$dName ${dPhone.isNotEmpty ? "($dPhone)" : ""}',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (val) {
+                              if (val != null) {
+                                setDialogState(() {
+                                  selectedDriver = val;
+                                });
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dispatchCtx),
+                  child: Text(
+                    'Ka noqo',
+                    style: GoogleFonts.plusJakartaSans(color: Colors.grey.shade700),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final orderId = order['id'];
+                    if (orderId == null) return;
+
+                    // 1. Close dialog immediately
+                    if (Navigator.of(context).canPop()) {
+                      Navigator.of(context).pop();
+                    }
+
+                    // 2. Perform PRIMARY status update (Exact same way Accept & Ready work)
+                    try {
+                      final client = SupabaseService.instance.client;
+                      if (client != null && SupabaseService.instance.isInitialized) {
+                        await client
+                            .from('orders')
+                            .update({'status': 'Out for Delivery'})
+                            .eq('id', orderId);
+
+                        FcmSender().sendTopicNotification(
+                          topic: 'nasiib_orders',
+                          title: 'Nasiib Pharmacy Delivery',
+                          body: 'Dalabkaaga dawooyinka wuxuu ku jiraa jidka!',
+                        );
+                      }
+
+                      // 3. Immediately update UI & trigger full reload
+                      if (mounted) {
+                        setState(() {
+                          order['status'] = 'Out for Delivery';
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("Dalabka waa loo diray darawalka!"),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                      await context.read<AppState>().fetchPharmacyOrders();
+                    } catch (e) {
+                      debugPrint("Primary Status Update Failed: $e");
+                    }
+
+                    // 4. Secondary non-blocking driver metadata update (if columns exist)
+                    final targetDriver = selectedDriver ?? (drivers.isNotEmpty ? drivers.first : null);
+                    if (targetDriver != null) {
+                      final dName = (targetDriver['name'] ?? targetDriver['full_name'] ?? '').toString();
+                      final dPhone = (targetDriver['phone'] ?? targetDriver['phone_number'] ?? '').toString();
+                      try {
+                        final client = SupabaseService.instance.client;
+                        if (client != null && SupabaseService.instance.isInitialized) {
+                          await client
+                              .from('orders')
+                              .update({
+                                'rider_name': dName,
+                                'rider_phone': dPhone,
+                              })
+                              .eq('id', orderId);
+                        }
+                      } catch (_) {
+                        // Silently ignore if column does not exist
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.send_rounded, size: 16, color: Colors.white),
+                  label: Text(
+                    'U Dir Darawalka',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF15803D),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverActiveTasksCard(
+    BuildContext context,
+    Map<String, dynamic> order,
+    List<Map<String, dynamic>> allItems,
+  ) {
+    final orderId = order['id']?.toString() ?? '';
+    final orderNum = order['order_number']?.toString() ?? '#ORD';
+    final patientName = order['patient_name']?.toString() ?? 'Bukaan';
+    final patientPhone = order['patient_phone']?.toString() ?? 'N/A';
+    final district = order['district']?.toString() ?? 'Hodan';
+    final address = order['delivery_address']?.toString() ?? 'Mogadishu';
+    final total = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
+    final driverName = (order['rider_name'] ?? order['driver_name'] ?? 'Darawal').toString();
+    final driverPhone = (order['rider_phone'] ?? order['driver_phone'] ?? '').toString();
+
+    final orderItems = allItems.where((i) => i['order_id']?.toString() == orderId).toList();
+    final itemsSummary = orderItems.isNotEmpty
+        ? orderItems.map((i) => "${i['medicine_name'] ?? 'Dawada'} (x${i['quantity'] ?? 1})").join(', ')
+        : (order['items_summary']?.toString() ?? 'Dawaa ilaa 1+');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFDCFCE7), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      orderNum,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.two_wheeler_rounded, size: 14, color: Colors.orange),
+                        const SizedBox(width: 4),
+                        Text(
+                          'On The Way',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                '\$${total.toStringAsFixed(2)}',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: const Color(0xFF15803D),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.person_rounded, size: 16, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              Text(
+                'Bukaanka: ',
+                style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFF64748B)),
+              ),
+              Text(
+                patientName,
+                style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+              ),
+              const SizedBox(width: 12),
+              const Icon(Icons.phone_rounded, size: 14, color: Color(0xFF64748B)),
+              const SizedBox(width: 4),
+              Text(
+                patientPhone,
+                style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF0F172A)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.location_on_rounded, size: 16, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Cinwaanka: $district, $address',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 13, color: const Color(0xFF334155)),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.medication_rounded, size: 16, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Dawooyinka: $itemsSummary',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 12, color: const Color(0xFF475569)),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          if (driverName.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.sports_motorsports_rounded, size: 16, color: Color(0xFF15803D)),
+                const SizedBox(width: 6),
+                Text(
+                  'Darawalka: $driverName ${driverPhone.isNotEmpty ? "($driverPhone)" : ""}',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF15803D)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDriverManagementView(BuildContext context) {
+    final appState = context.watch<AppState>();
+    final allOrders = appState.orders;
+    final activeOrders = allOrders.where((o) {
+      final st = (o['status'] ?? '').toString();
+      return st == 'Out for Delivery' || st == 'On The Way';
+    }).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDCFCE7),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.delivery_dining_rounded, color: Color(0xFF15803D), size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Driver Management (Maamulka Darawallada)',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Diiwaangeli oo maamul darawallada gaarsiinta dawooyinka ee Nasiib Hospital',
+                  style: GoogleFonts.plusJakartaSans(
+                    color: AppTheme.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+            ElevatedButton.icon(
+              onPressed: () => _showAddDriverDialog(context),
+              icon: const Icon(Icons.add_rounded, color: Colors.white, size: 20),
+              label: Text(
+                '+ Diiwaangeli Darawal',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontSize: 13,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF15803D),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 24),
+
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
+              ? SupabaseService.instance.client!.from('drivers').stream(primaryKey: ['id'])
+              : const Stream.empty(),
+          builder: (context, snapshot) {
+            final streamedList = snapshot.data ?? [];
+            final driverList = streamedList.isNotEmpty ? streamedList : _manualDriversList;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDriverKpiCard(
+                        'Warta Darawallada',
+                        '${driverList.length}',
+                        Icons.people_rounded,
+                        const Color(0xFF15803D),
+                        const Color(0xFFDCFCE7),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildDriverKpiCard(
+                        'Hawlaha Hal-ka-mid ah',
+                        '${activeOrders.length}',
+                        Icons.two_wheeler_rounded,
+                        Colors.orange.shade800,
+                        Colors.orange.shade50,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          'Darawallada Diiwaangashan (${driverList.length})',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      if (driverList.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(32.0),
+                          child: Center(
+                            child: Column(
+                              children: [
+                                const Icon(Icons.two_wheeler_rounded, size: 48, color: AppTheme.textLight),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Weli darawal ma diiwaangashana. Guji "+ Diiwaangeli Darawal" si aad u ku darto.',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14,
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: driverList.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final d = driverList[index];
+                            final driverId = d['id']?.toString() ?? '';
+                            final dName = (d['name'] ?? d['full_name'] ?? 'Darawal').toString();
+                            final dPhone = (d['phone'] ?? d['phone_number'] ?? 'N/A').toString();
+                            final dStatus = (d['status'] ?? 'active').toString();
+
+                            return ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFDCFCE7),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.person_pin_rounded, color: Color(0xFF15803D), size: 20),
+                              ),
+                              title: Text(
+                                dName,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                  color: const Color(0xFF0F172A),
+                                ),
+                              ),
+                              subtitle: Text(
+                                'Tel: $dPhone',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFDCFCE7),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      dStatus.toUpperCase(),
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: const Color(0xFF15803D),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 20),
+                                    tooltip: 'Tirtir Darawalka',
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: const Text('Tirtir Darawalka'),
+                                          content: Text('Ma ziirtaa inaad tirtirto darawalka "$dName"?'),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(ctx, false),
+                                              child: const Text('Ka noqo'),
+                                            ),
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                              onPressed: () => Navigator.pop(ctx, true),
+                                              child: const Text('Tirtir', style: TextStyle(color: Colors.white)),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      if (confirm == true && driverId.isNotEmpty) {
+                                        try {
+                                          final client = SupabaseService.instance.client;
+                                          if (client != null && SupabaseService.instance.isInitialized) {
+                                            await client.from('drivers').delete().eq('id', driverId);
+                                          }
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('Darawalka waa la tirtiray!'),
+                                                backgroundColor: Color(0xFF15803D),
+                                              ),
+                                            );
+                                          }
+                                          _fetchDrivers();
+                                          setState(() {});
+                                        } catch (e) {
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(content: Text('Cillad: $e'), backgroundColor: Colors.red),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _manualDriversList = [];
+
+  Future<void> _fetchDrivers() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && SupabaseService.instance.isInitialized) {
+        final res = await client.from('drivers').select();
+        if (res is List && mounted) {
+          setState(() {
+            _manualDriversList = List<Map<String, dynamic>>.from(res);
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Widget _buildDriverKpiCard(String label, String value, IconData icon, Color color, Color bg) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.plusJakartaSans(fontSize: 22, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+              ),
+              Text(
+                label,
+                style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddDriverDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDCFCE7),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.person_add_rounded, color: Color(0xFF15803D)),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Diiwaangeli Darawal Cusub',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: 'Magaca Darawalka',
+                    hintText: 'e.g. Maxamed Cali',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: InputDecoration(
+                    labelText: 'Nambarka Taleefanka',
+                    hintText: 'e.g. 615001122 ama +252615001122',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text('Ka noqo', style: GoogleFonts.plusJakartaSans(color: Colors.grey.shade700)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                final rawPhone = phoneController.text.trim();
+
+                if (name.isEmpty || rawPhone.isEmpty) return;
+
+                final phone = rawPhone.startsWith('+') ? rawPhone : '+252$rawPhone';
+
+                try {
+                  final client = SupabaseService.instance.client;
+                  if (client != null && SupabaseService.instance.isInitialized) {
+                    await client.from('drivers').insert({
+                      'name': name,
+                      'phone': phone,
+                      'status': 'active',
+                    });
+                  }
+
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Darawalka "$name" si guul leh ayaa loo diiwaangeliyay!'),
+                        backgroundColor: const Color(0xFF15803D),
+                      ),
+                    );
+                  }
+
+                  _fetchDrivers();
+                  setState(() {});
+                  Navigator.pop(dialogCtx);
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Cillad ayaa dhacday: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF15803D),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(
+                'Kaydi Darawalka',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -8756,6 +10404,78 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
         const SizedBox(height: 20),
 
+        // Active Driver Deliveries Section
+        Builder(
+          builder: (context) {
+            final activeDriverOrders = allOrders.where((o) {
+              final st = (o['status'] ?? '').toString();
+              return st == 'Out for Delivery' || st == 'On The Way';
+            }).toList();
+
+            if (activeDriverOrders.isNotEmpty && (_selectedOrderStatusFilter == 'All' || _selectedOrderStatusFilter == 'Out for Delivery')) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFDCFCE7), width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF15803D),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.two_wheeler_rounded, color: Colors.white, size: 18),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Driver Active Deliveries (Hawlaha Darawallada Hal-ka-mid ah)',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF15803D),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF15803D),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '${activeDriverOrders.length}',
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ...activeDriverOrders.map((o) => _buildDriverActiveTasksCard(context, o, allItems)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              );
+            }
+            return const SizedBox.shrink();
+          },
+        ),
+
         // Orders List Container
         if (filteredOrders.isEmpty)
           Container(
@@ -8829,7 +10549,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   final orderNum = order['order_number']?.toString() ?? '#ORD';
                   final patientName =
                       order['patient_name']?.toString() ?? 'Patient';
-                  final district = order['district']?.toString() ?? 'Mogadishu';
+                  String rawDistrict = order['district']?.toString() ?? '';
+                  if (rawDistrict.isEmpty || rawDistrict == 'Medicines & Skincare' || rawDistrict == 'Pharmacy') {
+                    final addr = (order['delivery_address'] ?? order['address'] ?? order['notes'] ?? order['reason_for_visit'] ?? '').toString();
+                    if (addr.contains(',')) {
+                      final parts = addr.split(',');
+                      if (parts.length >= 2) {
+                        rawDistrict = parts[parts.length - 2].trim();
+                      } else if (parts.isNotEmpty) {
+                        rawDistrict = parts[0].trim();
+                      }
+                    }
+                  }
+                  if (rawDistrict.isEmpty || rawDistrict == 'Medicines & Skincare' || rawDistrict == 'Pharmacy') {
+                    rawDistrict = 'Hodan';
+                  }
+                  final district = rawDistrict;
                   final total =
                       (order['total_amount'] as num?)?.toDouble() ?? 0.0;
                   final payMethod =
@@ -9016,4 +10751,50 @@ class CarePlusLineChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-// 933
+
+class SparklineChartPainter extends CustomPainter {
+  final Color color;
+  SparklineChartPainter({this.color = const Color(0xFF10B981)});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+
+    final path = Path();
+    final w = size.width;
+    final h = size.height;
+
+    path.moveTo(0, h * 0.75);
+    path.cubicTo(w * 0.25, h * 0.90, w * 0.35, h * 0.20, w * 0.55, h * 0.45);
+    path.cubicTo(w * 0.70, h * 0.65, w * 0.85, h * 0.10, w, h * 0.15);
+
+    final fillPath = Path.from(path)
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          color.withOpacity(0.35),
+          color.withOpacity(0.0),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, w, h));
+
+    canvas.drawPath(fillPath, fillPaint);
+
+    final linePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawPath(path, linePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/app_state.dart';
+import '../../utils/somali_phone_formatter.dart';
 import 'payment_screen.dart';
 
 class DeliveryDetailsScreen extends StatefulWidget {
@@ -191,6 +193,10 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
                           final String orderId =
                               'ord_${DateTime.now().millisecondsSinceEpoch}';
 
+                          final bool isNurseBooking = widget.customOrder?.id.startsWith('nurse_') == true ||
+                              widget.customOrder?.doctorSpecialty.toLowerCase().contains('kalkaali') == true ||
+                              widget.customOrder?.doctorSpecialty.toLowerCase().contains('nurse') == true;
+
                           final orderBooking = AppointmentModel(
                             id: orderId,
                             referenceId: refId,
@@ -199,21 +205,24 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
                             doctorName:
                                 widget.customOrder?.doctorName ??
                                 'Nasiib Hospital Pharmacy',
-                            doctorSpecialty: 'Medicines & Skincare',
-                            doctorImageUrl: '',
+                            doctorSpecialty: isNurseBooking
+                                ? (widget.customOrder?.doctorSpecialty ?? 'Kalkaaliso (Home Care)')
+                                : 'Medicines & Skincare',
+                            doctorImageUrl: widget.customOrder?.doctorImageUrl ?? '',
                             hospitalName:
                                 'Nasiib Hospital - Mogadishu ($selectedDistrict)',
                             date: 'Today',
-                            time: 'Immediate Delivery',
+                            time: isNurseBooking ? 'Home Nursing Visit' : 'Immediate Delivery',
                             appointmentType:
                                 widget.customOrder?.appointmentType ??
-                                'Delivery Order',
+                                (isNurseBooking ? 'Home Nursing Care' : 'Delivery Order'),
                             patientName: nameController.text.trim(),
                             patientPhone: phoneController.text.trim(),
                             patientAge: 24,
                             patientGender: 'Male',
-                            reasonForVisit:
-                                'Delivery: ${detailsController.text.trim()}, $selectedDistrict, Mogadishu',
+                            reasonForVisit: isNurseBooking
+                                ? 'Nurse Request: ${detailsController.text.trim().isNotEmpty ? detailsController.text.trim() + ', ' : ''}$selectedDistrict, Mogadishu'
+                                : 'Delivery: ${detailsController.text.trim()}, $selectedDistrict, Mogadishu',
                             paymentMethod: 'EVC Plus',
                             amount: totalAmount,
                             queueNumber: 5,
@@ -369,7 +378,7 @@ class _DeliveryDetailsScreenState extends State<DeliveryDetailsScreen> {
                   ),
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
-                      return 'Please enter your phone number';
+                      return 'Fadlan geli nambarka taleefanka!';
                     }
                     return null;
                   },

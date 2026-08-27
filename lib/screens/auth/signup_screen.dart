@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../config/app_theme.dart';
 import '../../services/firebase_auth_service.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/somali_phone_formatter.dart';
 import '../../widgets/network_or_asset_image.dart';
 import 'otp_screen.dart';
 
@@ -139,9 +139,6 @@ class _SignupScreenState extends State<SignupScreen> {
               TextField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9+]')),
-                ],
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 15,
                   color: AppTheme.textPrimary,

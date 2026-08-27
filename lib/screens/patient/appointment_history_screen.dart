@@ -4,8 +4,21 @@ import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
 import '../../services/app_state.dart';
 
-class AppointmentHistoryScreen extends StatelessWidget {
+class AppointmentHistoryScreen extends StatefulWidget {
   const AppointmentHistoryScreen({super.key});
+
+  @override
+  State<AppointmentHistoryScreen> createState() => _AppointmentHistoryScreenState();
+}
+
+class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AppState>().fetchAppointmentsAndNurseOrders();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,8 +46,12 @@ class AppointmentHistoryScreen extends StatelessWidget {
         centerTitle: true,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await context.read<AppState>().fetchAppointmentsAndNurseOrders();
+          },
+          child: Column(
+            children: [
             // 1. Overview Summary Card
             Container(
               margin: const EdgeInsets.all(20.0),
@@ -373,21 +390,48 @@ class AppointmentHistoryScreen extends StatelessWidget {
                                       ),
                                     ],
                                   ),
-                                  // Status Badge
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFDCFCE7),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      apt.status,
-                                      style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: const Color(0xFF15803D),
-                                      ),
-                                    ),
+                                  // Dynamic Status Badge
+                                  Builder(
+                                    builder: (context) {
+                                      final st = apt.status.toLowerCase();
+                                      Color bgColor;
+                                      Color textColor;
+                                      String displayStatus;
+
+                                      if (st.contains('cancel')) {
+                                        bgColor = const Color(0xFFFEE2E2);
+                                        textColor = const Color(0xFFDC2626);
+                                        displayStatus = 'Cancelled';
+                                      } else if (st.contains('confirm')) {
+                                        bgColor = const Color(0xFFDBEAFE);
+                                        textColor = const Color(0xFF2563EB);
+                                        displayStatus = 'Confirmed';
+                                      } else if (st.contains('complete')) {
+                                        bgColor = const Color(0xFFDCFCE7);
+                                        textColor = const Color(0xFF15803D);
+                                        displayStatus = 'Completed';
+                                      } else {
+                                        bgColor = const Color(0xFFFEF3C7);
+                                        textColor = const Color(0xFFD97706);
+                                        displayStatus = 'Pending';
+                                      }
+
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: bgColor,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          displayStatus,
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: textColor,
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ],
                               ),
@@ -399,6 +443,7 @@ class AppointmentHistoryScreen extends StatelessWidget {
             ),
           ],
         ),
+       ),
       ),
     );
   }

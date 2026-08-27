@@ -25,6 +25,64 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
+  Future<bool> _showDeleteMessageDialog(BuildContext context, AppState appState, String msgId) async {
+    final bool? result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Text(
+          'Delete message?',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: Color(0xFF14B8A6),
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Delete for me',
+              style: TextStyle(
+                color: Color(0xFF14B8A6),
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await appState.deleteChatMessage(msgId);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message deleted for me'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return true;
+    }
+    return false;
+  }
   Widget _buildChatImage(String imageUrl) {
     return GestureDetector(
       onTap: () {
@@ -156,9 +214,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         folder: 'chat_images',
       );
       if (publicStorageUrl.isEmpty) {
-        // Compress image bytes to ~20KB so Supabase DB HTTP insert succeeds 100% of the time
-        final compressed = ImagePickerService.compressBytes(bytes, maxWidth: 450, quality: 65);
-        publicStorageUrl = 'data:image/jpeg;base64,${base64Encode(compressed)}';
+        publicStorageUrl = 'data:image/png;base64,${base64Encode(bytes)}';
       }
 
       final currentDoc = widget.doctor ?? _activeChatDoctor;
@@ -745,6 +801,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       return Dismissible(
                         key: Key(msgId),
                         direction: DismissDirection.horizontal,
+                        confirmDismiss: (direction) async {
+                          return await _showDeleteMessageDialog(context, appState, msgId);
+                        },
+                        onDismissed: (direction) {},
                         background: Container(
                           alignment: Alignment.centerLeft,
                           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -763,19 +823,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             color: Colors.white,
                           ),
                         ),
-                        onDismissed: (direction) {
-                          appState.deleteChatMessage(msgId);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Fariintii si joogto ah ayaa loo tirtiray (Permanently Deleted).',
-                              ),
-                            ),
-                          );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6.0),
-                          child: Row(
+                        child: GestureDetector(
+                          onLongPress: () {
+                            _showDeleteMessageDialog(context, appState, msgId);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6.0),
+                            child: Row(
                             mainAxisAlignment: isMe
                                 ? MainAxisAlignment.end
                                 : MainAxisAlignment.start,
@@ -928,7 +982,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             ],
                           ),
                         ),
-                      );
+                      ),
+                    );
                     },
                   );
               },

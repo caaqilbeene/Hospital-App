@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../config/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/app_state.dart';
+import '../../utils/somali_phone_formatter.dart';
 import 'appointment_confirmed_screen.dart';
 import 'main_patient_layout.dart';
 import 'my_orders_screen.dart';
@@ -41,7 +43,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
   void initState() {
     super.initState();
     _cardNumberController.addListener(() => setState(() {}));
-    // Phone field starts empty — user types their own number
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final appState = Provider.of<AppState>(context, listen: false);
+        final u = appState.currentUser;
+        // Auto-fill patient name for card holder
+        final String pName = widget.booking.patientName.isNotEmpty
+            ? widget.booking.patientName
+            : (u?.fullName ?? '');
+        if (pName.isNotEmpty && _cardNameController.text.isEmpty) {
+          _cardNameController.text = pName;
+        }
+      }
+    });
   }
 
   @override
@@ -79,6 +93,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
       widget.booking.doctorName.toLowerCase().contains('order') ||
       widget.booking.doctorName.toLowerCase().contains('cart');
 
+  bool get _isNurse =>
+      widget.booking.doctorSpecialty.toLowerCase().contains('nurse') ||
+      widget.booking.doctorName.toLowerCase().contains('nurse') ||
+      widget.booking.reasonForVisit.toLowerCase().contains('nurse') ||
+      widget.booking.doctorSpecialty.toLowerCase().contains('kalkaali') ||
+      widget.booking.doctorName.toLowerCase().contains('kalkaali') ||
+      widget.booking.id.startsWith('nurse_');
+
   Future<void> _onPayNow() async {
     // 1. Guard: check if method selected
     if (_selectedMethod == null) {
@@ -94,11 +116,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
     // 2. Validate EVC Plus & E-Dahab
     if (_selectedMethod == _PayMethod.evcPlus ||
         _selectedMethod == _PayMethod.eDahab) {
-      final phone = _phoneController.text.trim();
-      if (phone.isEmpty || phone.length < 7) {
+      final phoneError = validateSomaliPhoneNumber(_phoneController.text);
+      if (phoneError != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter a valid phone number'),
+          SnackBar(
+            content: Text(phoneError),
             backgroundColor: Colors.red,
           ),
         );
@@ -145,7 +167,80 @@ class _PaymentScreenState extends State<PaymentScreen> {
     final appState = context.read<AppState>();
     appState.updateDraftBooking(paymentMethod: _methodLabel);
 
-    if (_isDelivery) {
+    if (_isNurse) {
+      try {
+        final rawReason = widget.booking.reasonForVisit
+            .replaceAll('Nurse Request: ', '')
+            .replaceAll('Delivery: ', '');
+        final parts = rawReason.split(',');
+        final district = parts.length > 1 ? parts[parts.length - 2].trim() : (parts.isNotEmpty ? parts[0].trim() : 'Hodan');
+        final address = rawReason;
+
+        final bookingId = await appState.placeNurseOrder(
+          nurseId: widget.booking.doctorId,
+          nurseName: widget.booking.doctorName,
+          patientName: widget.booking.patientName,
+          phone: widget.booking.patientPhone,
+          district: district,
+          address: address,
+          notes: widget.booking.reasonForVisit,
+          fee: widget.booking.amount,
+          paymentMethod: _methodLabel,
+          status: 'Pending',
+        );
+
+        if (bookingId == null) {
+          throw Exception('Could not write order to Supabase database. Please try again.');
+        }
+
+        appState.confirmCurrentBooking();
+        final confirmedBooking = AppointmentModel(
+          id: widget.booking.id,
+          referenceId: bookingId ?? widget.booking.referenceId,
+          doctorId: widget.booking.doctorId,
+          doctorName: widget.booking.doctorName,
+          doctorSpecialty: widget.booking.doctorSpecialty,
+          doctorImageUrl: widget.booking.doctorImageUrl,
+          hospitalName: widget.booking.hospitalName,
+          date: widget.booking.date,
+          time: widget.booking.time,
+          appointmentType: widget.booking.appointmentType,
+          patientName: widget.booking.patientName,
+          patientPhone: widget.booking.patientPhone,
+          patientAge: widget.booking.patientAge,
+          patientGender: widget.booking.patientGender,
+          reasonForVisit: widget.booking.reasonForVisit,
+          paymentMethod: _methodLabel,
+          amount: widget.booking.amount,
+          queueNumber: widget.booking.queueNumber,
+          status: 'Confirmed',
+          createdAt: widget.booking.createdAt,
+        );
+        appState.addAppointment(confirmedBooking);
+
+        if (mounted) {
+          _showPaymentSuccessDialog(
+            context: context,
+            orderId: bookingId ?? widget.booking.referenceId,
+            itemCount: 1,
+            address: district,
+            paymentMethod: _methodLabel,
+            totalAmount: widget.booking.amount,
+            isNurse: true,
+            nurseName: widget.booking.doctorName,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Nurse booking failed: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } else if (_isDelivery) {
       final items = appState.cartItems
           .map(
             (c) => {
@@ -165,21 +260,35 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
 
       try {
+        String realDistrict = 'Hodan';
+        final reasonStr = widget.booking.reasonForVisit;
+        if (reasonStr.contains(',')) {
+          final parts = reasonStr.split(',');
+          if (parts.length >= 2) {
+            realDistrict = parts[parts.length - 2].trim();
+          }
+        }
+        if (realDistrict == 'Medicines & Skincare' || realDistrict.isEmpty) {
+          final hosp = widget.booking.hospitalName;
+          if (hosp.contains('(') && hosp.contains(')')) {
+            realDistrict = hosp.split('(').last.replaceAll(')', '').trim();
+          }
+        }
+        if (realDistrict.isEmpty || realDistrict == 'Medicines & Skincare') {
+          realDistrict = 'Hodan';
+        }
+
         final orderId = await appState.placeOrder(
           patientName: widget.booking.patientName,
           patientPhone: widget.booking.patientPhone,
           city: 'Mogadishu',
-          district: widget.booking.doctorSpecialty.isNotEmpty
-              ? widget.booking.doctorSpecialty
-              : 'Hodan',
+          district: realDistrict,
           deliveryAddress: widget.booking.reasonForVisit.replaceAll(
             'Delivery: ',
             '',
           ),
-          subtotal: widget.booking.amount > 2.0
-              ? widget.booking.amount - 2.0
-              : widget.booking.amount,
-          deliveryFee: 2.0,
+          subtotal: widget.booking.amount,
+          deliveryFee: 0.0,
           totalAmount: widget.booking.amount,
           paymentMethod: _methodLabel,
           paymentStatus: 'Paid',
@@ -253,10 +362,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    final subtotal = widget.booking.amount > 2.0
-        ? widget.booking.amount - 2.0
-        : widget.booking.amount;
-    final deliveryFee = _isDelivery ? 2.0 : 0.0;
+    final subtotal = widget.booking.amount;
+    final deliveryFee = 0.0;
     final total = widget.booking.amount;
 
     return Scaffold(
@@ -411,8 +518,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
     required Widget leading,
   }) {
     final bool selected = _selectedMethod == method;
+    void selectMethod(_PayMethod? v) {
+      setState(() {
+        if (_selectedMethod != v) {
+          _phoneController.clear();
+        }
+        _selectedMethod = v;
+      });
+    }
+
     return GestureDetector(
-      onTap: () => setState(() => _selectedMethod = method),
+      onTap: () => selectMethod(method),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -469,7 +585,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             Radio<_PayMethod?>(
               value: method,
               groupValue: _selectedMethod,
-              onChanged: (v) => setState(() => _selectedMethod = v),
+              onChanged: (v) => selectMethod(v),
               activeColor: AppTheme.primaryColor,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
@@ -534,6 +650,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
           TextField(
             controller: _phoneController,
             keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              SomaliPhoneInputFormatter(),
+            ],
             style: GoogleFonts.plusJakartaSans(fontSize: 14),
             decoration: InputDecoration(
               hintText: hint,
@@ -774,18 +894,24 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Items total row
-          _summaryRow(
-            label: isDelivery ? 'Items Total' : 'Consultation Fee',
-            value: '\$${subtotal.toStringAsFixed(2)}',
-          ),
-
-          if (isDelivery) ...[
-            const SizedBox(height: 6),
+          // Items total row / Nurse Fee
+          if (_isNurse) ...[
             _summaryRow(
-              label: 'Delivery Fee',
-              value: '\$${deliveryFee.toStringAsFixed(2)}',
+              label: 'Nurse Fee',
+              value: '\$${total.toStringAsFixed(2)}',
             ),
+          ] else ...[
+            _summaryRow(
+              label: isDelivery ? 'Items Total' : 'Consultation Fee',
+              value: '\$${subtotal.toStringAsFixed(2)}',
+            ),
+            if (isDelivery) ...[
+              const SizedBox(height: 6),
+              _summaryRow(
+                label: 'Delivery Fee',
+                value: '\$${deliveryFee.toStringAsFixed(2)}',
+              ),
+            ],
           ],
 
           const SizedBox(height: 10),
@@ -938,6 +1064,8 @@ void _showPaymentSuccessDialog({
   required String address,
   required String paymentMethod,
   required double totalAmount,
+  bool isNurse = false,
+  String? nurseName,
 }) {
   showDialog(
     context: context,
@@ -996,10 +1124,10 @@ void _showPaymentSuccessDialog({
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'PAYMENT SUCCESSFUL!',
+                  isNurse ? 'Ballanta Kalkaalisada Waa La Aqbalay!' : 'PAYMENT SUCCESSFUL!',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 18,
+                    fontSize: isNurse ? 16 : 18,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.5,
                     color: const Color(0xFF1B5E20),
@@ -1007,7 +1135,9 @@ void _showPaymentSuccessDialog({
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Thank you for your purchase. Your order has been placed and is being prepared.',
+                  isNurse
+                      ? 'Kalkaalisada ayaa kula soo xiriiri doonta goor dhow.'
+                      : 'Thank you for your purchase. Your order has been placed and is being prepared.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
@@ -1029,14 +1159,17 @@ void _showPaymentSuccessDialog({
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _dialogRow(
-                        'Order ID',
+                        isNurse ? 'Booking ID' : 'Order ID',
                         orderId.startsWith('#') ? orderId : '#$orderId',
                       ),
                       const SizedBox(height: 6),
-                      _dialogRow('Items', '$itemCount Items'),
+                      _dialogRow(
+                        isNurse ? 'Kalkaalisada' : 'Items',
+                        isNurse ? (nurseName ?? 'Kalkaaliye') : '$itemCount Items',
+                      ),
                       const SizedBox(height: 6),
                       _dialogRow(
-                        'Address',
+                        isNurse ? 'Cinwaanka (District)' : 'Address',
                         address.isNotEmpty ? address : 'Mogadishu',
                       ),
                       const SizedBox(height: 6),
@@ -1066,8 +1199,45 @@ void _showPaymentSuccessDialog({
                     ],
                   ),
                 ),
+                const SizedBox(height: 16),
 
-                const SizedBox(height: 20),
+                // 📥 Download / View Official Receipt Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      _showOfficialReceipt(
+                        context: context,
+                        orderId: orderId,
+                        totalAmount: totalAmount,
+                        paymentMethod: paymentMethod,
+                        address: address,
+                        isNurse: isNurse,
+                        nurseName: nurseName,
+                        itemCount: itemCount,
+                      );
+                    },
+                    icon: const Icon(Icons.download_rounded, color: Colors.white, size: 20),
+                    label: Text(
+                      'SOO DEJISO RASIIDKA (DOWNLOAD RECEIPT)',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E562A),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
 
                 SizedBox(
                   width: double.infinity,
@@ -1100,46 +1270,234 @@ void _showPaymentSuccessDialog({
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MyOrdersScreen(),
+                if (!isNurse) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const MyOrdersScreen(),
+                          ),
+                          (route) => route.isFirst,
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(
+                          color: Color(0xFF1E562A),
+                          width: 1.5,
                         ),
-                        (route) => route.isFirst,
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(
-                        color: Color(0xFF1E562A),
-                        width: 1.5,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                    ),
-                    child: Text(
-                      'TRACK ORDER',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF1E562A),
-                        letterSpacing: 0.5,
+                      child: Text(
+                        'TRACK ORDER',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF1E562A),
+                          letterSpacing: 0.5,
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
       );
     },
+  );
+}
+
+void _showOfficialReceipt({
+  required BuildContext context,
+  required String orderId,
+  required double totalAmount,
+  required String paymentMethod,
+  required String address,
+  required bool isNurse,
+  String? nurseName,
+  int itemCount = 1,
+}) {
+  final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+
+  showDialog(
+    context: context,
+    builder: (ctx) => Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E562A).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.local_hospital_rounded,
+                          color: Color(0xFF1E562A),
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'NASIIB HOSPITAL',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                              color: const Color(0xFF1E562A),
+                            ),
+                          ),
+                          Text(
+                            'Official Payment Receipt',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded, color: Colors.grey),
+                  ),
+                ],
+              ),
+              const Divider(height: 24, thickness: 1),
+
+              // Status Badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF81C784)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle_rounded, color: Color(0xFF2E7D32), size: 16),
+                    SizedBox(width: 6),
+                    Text(
+                      'PAID / WAA LA BIXIYAY',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1B5E20),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Receipt Fields
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  children: [
+                    _dialogRow('Receipt No:', orderId.startsWith('#') ? orderId : '#$orderId'),
+                    const SizedBox(height: 8),
+                    _dialogRow('Taariikhda (Date):', nowStr),
+                    const SizedBox(height: 8),
+                    _dialogRow('Adeegga (Service):', isNurse ? (nurseName ?? 'Kalkaaliye Guriga') : 'Dawooyinka & Delivery ($itemCount items)'),
+                    const SizedBox(height: 8),
+                    _dialogRow('Goobta (Address):', address.isNotEmpty ? address : 'Mogadishu'),
+                    const SizedBox(height: 8),
+                    _dialogRow('Habka Lacagta:', paymentMethod),
+                    const Divider(height: 20, color: Color(0xFFCBD5E1)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'TOTAL PAID:',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF1E562A),
+                          ),
+                        ),
+                        Text(
+                          '\$${totalAmount.toStringAsFixed(2)}',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF1E562A),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Download / Save Button
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Rasiidka si guul leh ayaa loo keydiyay (Receipt Saved)!'),
+                        backgroundColor: Color(0xFF1E562A),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    Navigator.pop(ctx);
+                  },
+                  icon: const Icon(Icons.file_download_done_rounded, color: Colors.white, size: 20),
+                  label: Text(
+                    'KEYDI RASIIDKA (SAVE RECEIPT)',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1E562A),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
   );
 }
 

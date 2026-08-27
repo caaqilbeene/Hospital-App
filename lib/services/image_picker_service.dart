@@ -1,11 +1,8 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image_cropper/image_cropper.dart';
 import 'supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:image/image.dart' as img;
 
 import 'stub_image_picker.dart' if (dart.library.html) 'web_image_picker.dart';
 
@@ -85,17 +82,5 @@ class ImagePickerService {
     return '';
   }
 
-  static Uint8List compressBytes(Uint8List bytes, {int maxWidth = 450, int quality = 65}) {
-    try {
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) return bytes;
-      final resized = (decoded.width > maxWidth)
-          ? img.copyResize(decoded, width: maxWidth)
-          : decoded;
-      return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
-    } catch (_) {
-      return bytes;
-    }
-  }
 }
 

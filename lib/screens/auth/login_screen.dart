@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/app_theme.dart';
 import '../../services/firebase_auth_service.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/somali_phone_formatter.dart';
 import '../../widgets/network_or_asset_image.dart';
 import 'otp_screen.dart';
 import 'signup_screen.dart';
@@ -93,7 +94,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  'Welcome to Nasiib Hospital app.\nPlease enter your phone number.',
+                  'Welcome to Nasiib Hospital.\nPlease enter your phone number.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 14,
@@ -115,9 +116,6 @@ class _LoginScreenState extends State<LoginScreen> {
               TextField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9+]')),
-                ],
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 15,
                   color: AppTheme.textPrimary,

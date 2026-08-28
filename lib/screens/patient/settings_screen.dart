@@ -541,8 +541,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Navigator.of(context, rootNavigator: true).pop();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Akoonkaaga si joogto ah ayaa loo tirtiray (Account Deleted Successfully).'),
-                        backgroundColor: Color(0xFFDC2626),
+                        content: Text('Account Deleted Successfully'),
+                        backgroundColor: AppTheme.primaryColor,
                         duration: Duration(seconds: 3),
                       ),
                     );

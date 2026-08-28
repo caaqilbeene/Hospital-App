@@ -192,7 +192,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     // 2. Pre-Auth Patient Existence Check across Supabase & Firestore
                     bool exists = false;
-                    String? queryError;
 
                     try {
                       final client = SupabaseService.instance.client;
@@ -200,40 +199,30 @@ class _LoginScreenState extends State<LoginScreen> {
                         try {
                           final supaCheck = await client
                               .from('patients')
-                              .select('id, phone_number')
-                              .inFilter('phone_number', possibleFormats)
-                              .maybeSingle();
+                              .select('id')
+                              .or(
+                                '${possibleFormats.map((f) => 'phone_number.eq."$f"').join(',')},${possibleFormats.map((f) => 'phone.eq."$f"').join(',')}',
+                              )
+                              .maybeSingle()
+                              .timeout(const Duration(seconds: 3));
                           if (supaCheck != null) exists = true;
                         } catch (e) {
-                          debugPrint("Supabase phone_number inFilter notice: $e");
-                        }
-
-                        if (!exists) {
-                          try {
-                            final supaCheck2 = await client
-                                .from('patients')
-                                .select('id')
-                                .inFilter('phone', possibleFormats)
-                                .maybeSingle();
-                            if (supaCheck2 != null) exists = true;
-                          } catch (e) {
-                            debugPrint("Supabase phone inFilter notice: $e");
-                          }
+                          debugPrint("Supabase existence check notice: $e");
                         }
                       }
                     } catch (e) {
-                      queryError = e.toString();
                       debugPrint("Supabase pre-auth check exception: $e");
                     }
 
-                    // Fallback to Firestore users/patients collections check
-                    if (!exists && queryError == null) {
+                    // Fallback to Firestore users collection check
+                    if (!exists) {
                       try {
                         for (final id in possibleFormats) {
                           final doc = await FirebaseFirestore.instance
                               .collection('users')
                               .doc(id)
-                              .get();
+                              .get()
+                              .timeout(const Duration(seconds: 2));
                           if (doc.exists && doc.data() != null && doc.data()!.isNotEmpty) {
                             exists = true;
                             break;
@@ -245,33 +234,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               .collection('users')
                               .where('phoneNumber', whereIn: possibleFormats)
                               .limit(1)
-                              .get();
+                              .get()
+                              .timeout(const Duration(seconds: 2));
                           if (q1.docs.isNotEmpty) exists = true;
-                        }
-
-                        if (!exists) {
-                          final q2 = await FirebaseFirestore.instance
-                              .collection('patients')
-                              .where('phone_number', whereIn: possibleFormats)
-                              .limit(1)
-                              .get();
-                          if (q2.docs.isNotEmpty) exists = true;
                         }
                       } catch (e) {
                         debugPrint("Firestore fallback check notice: $e");
                       }
-                    }
-
-                    if (queryError != null && !exists) {
-                      if (!mounted) return;
-                      setState(() => _isLoading = false);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Query Error: $queryError'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
                     }
 
                     if (!exists) {
@@ -280,9 +249,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'Account does not exist. Please sign up first.',
+                            'Akoonkan ma diiwaangashana. Fadlan marka hore is-diiwaangeli (Sign Up)!',
                           ),
                           backgroundColor: AppTheme.primaryColor,
+                          duration: Duration(seconds: 3),
                         ),
                       );
                       return;

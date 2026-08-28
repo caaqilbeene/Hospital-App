@@ -180,46 +180,59 @@ class SupabaseService {
 
   Future<bool> deleteUserData(String phoneNumber, {String? userId}) async {
     if (client == null || !isInitialized) return true;
-    final String cleanId = phoneNumber.replaceAll(
-      RegExp(r'[^a-zA-Z0-9_]'),
-      '_',
-    );
-    try {
-      final files = await client!.storage.from('avatars').list();
-      final userFiles = files
-          .where(
-            (f) =>
-                f.name.contains(cleanId) ||
-                (userId != null &&
-                    userId.isNotEmpty &&
-                    f.name.contains(userId)),
-          )
-          .map((f) => f.name)
-          .toList();
-      if (userFiles.isNotEmpty) {
-        await client!.storage.from('avatars').remove(userFiles);
-        debugPrint(
-          "[STORAGE] Deleted user avatars from Supabase Storage: $userFiles",
-        );
-      }
+    
+    final String cleanPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    String baseDigits = cleanPhone;
+    if (baseDigits.startsWith('252') && baseDigits.length >= 12) {
+      baseDigits = baseDigits.substring(3);
+    }
+    if (baseDigits.startsWith('0') && baseDigits.length >= 10) {
+      baseDigits = baseDigits.substring(1);
+    }
+    
+    final possibleFormats = [
+      phoneNumber,
+      cleanPhone,
+      baseDigits,
+      '0$baseDigits',
+      '252$baseDigits',
+      '+252$baseDigits',
+      if (userId != null && userId.isNotEmpty) userId,
+    ].toSet().where((s) => s.isNotEmpty).toList();
 
+    try {
+      final cleanId = phoneNumber.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
       try {
-        await client!
-            .from('appointments')
-            .delete()
-            .eq('patient_phone', phoneNumber);
+        final files = await client!.storage.from('avatars').list();
+        final userFiles = files
+            .where((f) => f.name.contains(cleanId) || (userId != null && userId.isNotEmpty && f.name.contains(userId)))
+            .map((f) => f.name)
+            .toList();
+        if (userFiles.isNotEmpty) {
+          await client!.storage.from('avatars').remove(userFiles);
+        }
       } catch (_) {}
-      try {
-        await client!.from('patients').delete().eq('phone', phoneNumber);
-      } catch (_) {}
-      if (userId != null && userId.isNotEmpty) {
+
+      // 1. Delete from appointments
+      for (final p in possibleFormats) {
         try {
-          await client!.from('patients').delete().eq('id', userId);
+          await client!.from('appointments').delete().or('patient_phone.eq."$p",patient_id.eq."$p"');
         } catch (_) {}
       }
-      try {
-        await client!.from('users').delete().eq('phone_number', phoneNumber);
-      } catch (_) {}
+
+      // 2. Delete from patients
+      for (final p in possibleFormats) {
+        try {
+          await client!.from('patients').delete().or('phone.eq."$p",phone_number.eq."$p",id.eq."$p"');
+        } catch (_) {}
+      }
+
+      // 3. Delete from users
+      for (final p in possibleFormats) {
+        try {
+          await client!.from('users').delete().or('phone_number.eq."$p",phone.eq."$p",id.eq."$p"');
+        } catch (_) {}
+      }
       return true;
     } catch (e) {
       debugPrint("[STORAGE] deleteUserData notice: $e");

@@ -88,7 +88,6 @@ class _OrderSuccessPageState extends State<OrderSuccessPage> {
                 if (idx != -1) {
                   appState.orders[idx] =
                       Map<String, dynamic>.from(updatedData);
-                  appState.notifyListeners();
                 }
               }
             }

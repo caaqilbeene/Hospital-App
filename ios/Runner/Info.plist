@@ -67,10 +67,10 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Waxaan u baahanahay sawiradaada si aad u dirto sawirka daawada.</string>
+	<string>Nasiib Hospital requires access to your photo library to upload prescription photos and medical documents / Waxaan u baahanahay sawiradaada si aad u dirto sawirka daawada.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Waxaan u baahanahay kamarada si aad u sawirto daawada.</string>
+	<string>Nasiib Hospital requires camera access to take photos of prescriptions and medical test reports / Waxaan u baahanahay kamarada si aad u sawirto daawada.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Waxaan u baahanahay microphone-ka si aad u duubto codka.</string>
+	<string>Nasiib Hospital requires microphone access to record voice notes and consult with doctors / Waxaan u baahanahay microphone-ka si aad u duubto codka.</string>
 </dict>
 </plist>

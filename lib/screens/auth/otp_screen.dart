@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/app_theme.dart';
 import '../../services/app_state.dart';
 import '../../services/email_otp_service.dart';
@@ -140,7 +142,6 @@ class _OtpScreenState extends State<OtpScreen> {
 
     if (success) {
       if (!mounted) return;
-      final String uid = authUserId ?? 'user_${DateTime.now().millisecondsSinceEpoch}';
       
       // Ensure normalized phone in E.164 (+252...)
       String normPhone = widget.phoneNumber.trim();
@@ -154,6 +155,18 @@ class _OtpScreenState extends State<OtpScreen> {
         normPhone = '+252$digits';
       }
 
+      // Generate a standard UUID v4 for Supabase
+      String generateCleanUuid() {
+        final random = Random.secure();
+        final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+        final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+        return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}';
+      }
+
+      final String validUuid = (authUserId != null && authUserId.length >= 30) ? authUserId : generateCleanUuid();
+
       // Strict OTP Gate: If signing up, create user profile ONLY after successful OTP verification
       if (widget.name != null && widget.name!.isNotEmpty) {
         final String name = widget.name!.trim().isNotEmpty ? widget.name!.trim() : 'Patient';
@@ -162,18 +175,42 @@ class _OtpScreenState extends State<OtpScreen> {
         try {
           final client = SupabaseService.instance.client;
           if (client != null && SupabaseService.instance.isInitialized) {
-            await client.from('patients').upsert({
-              'id': uid,
-              'user_id': uid,
-              'full_name': name,
-              'phone_number': normPhone.isNotEmpty ? normPhone : email,
-              'phone': normPhone,
-              'email': email,
-              'created_at': DateTime.now().toUtc().toIso8601String(),
-            }).select();
+            try {
+              await client.from('patients').upsert({
+                'id': validUuid,
+                'full_name': name,
+                'phone_number': normPhone.isNotEmpty ? normPhone : email,
+                'email': email,
+                'created_at': DateTime.now().toUtc().toIso8601String(),
+              });
+              debugPrint('[SUPABASE] Saved patient with UUID: $validUuid, phone: $normPhone');
+            } catch (supaErr) {
+              debugPrint('[SUPABASE] Primary upsert error: $supaErr, attempting insert without id...');
+              await client.from('patients').insert({
+                'full_name': name,
+                'phone_number': normPhone.isNotEmpty ? normPhone : email,
+                'email': email,
+                'created_at': DateTime.now().toUtc().toIso8601String(),
+              });
+            }
           }
         } catch (e) {
           debugPrint('SUPABASE_INSERT_ERROR: $e');
+        }
+
+        // Dual persistence in Firestore users collection
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(normPhone).set({
+            'id': validUuid,
+            'fullName': name,
+            'name': name,
+            'phoneNumber': normPhone,
+            'phone': normPhone,
+            'email': email,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('FIRESTORE_USER_SAVE_ERROR: $e');
         }
 
         context.read<AppState>().registerUser(

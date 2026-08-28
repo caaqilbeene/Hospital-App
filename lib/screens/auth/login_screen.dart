@@ -200,14 +200,28 @@ class _LoginScreenState extends State<LoginScreen> {
                           final supaCheck = await client
                               .from('patients')
                               .select('id')
-                              .or(
-                                '${possibleFormats.map((f) => 'phone_number.eq."$f"').join(',')},${possibleFormats.map((f) => 'phone.eq."$f"').join(',')}',
-                              )
+                              .inFilter('phone_number', possibleFormats)
+                              .limit(1)
                               .maybeSingle()
                               .timeout(const Duration(seconds: 3));
                           if (supaCheck != null) exists = true;
                         } catch (e) {
-                          debugPrint("Supabase existence check notice: $e");
+                          debugPrint("Supabase phone_number check notice: $e");
+                        }
+
+                        if (!exists) {
+                          try {
+                            final supaCheck2 = await client
+                                .from('patients')
+                                .select('id')
+                                .inFilter('phone', possibleFormats)
+                                .limit(1)
+                                .maybeSingle()
+                                .timeout(const Duration(seconds: 3));
+                            if (supaCheck2 != null) exists = true;
+                          } catch (e) {
+                            debugPrint("Supabase phone check notice: $e");
+                          }
                         }
                       }
                     } catch (e) {

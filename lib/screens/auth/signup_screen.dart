@@ -286,14 +286,27 @@ class _SignupScreenState extends State<SignupScreen> {
                       final client = SupabaseService.instance.client;
                       if (client != null &&
                           SupabaseService.instance.isInitialized) {
-                        final supaCheck = await client
-                            .from('patients')
-                            .select('id')
-                            .or(
-                              '${possibleFormats.map((f) => 'phone_number.eq."$f"').join(',')},${possibleFormats.map((f) => 'phone.eq."$f"').join(',')}',
-                            )
-                            .maybeSingle();
-                        if (supaCheck != null) alreadyExists = true;
+                        try {
+                          final supaCheck = await client
+                              .from('patients')
+                              .select('id')
+                              .inFilter('phone_number', possibleFormats)
+                              .limit(1)
+                              .maybeSingle();
+                          if (supaCheck != null) alreadyExists = true;
+                        } catch (_) {}
+
+                        if (!alreadyExists) {
+                          try {
+                            final supaCheck2 = await client
+                                .from('patients')
+                                .select('id')
+                                .inFilter('phone', possibleFormats)
+                                .limit(1)
+                                .maybeSingle();
+                            if (supaCheck2 != null) alreadyExists = true;
+                          } catch (_) {}
+                        }
                       }
                     } catch (e) {
                       debugPrint("Supabase signup check error: $e");

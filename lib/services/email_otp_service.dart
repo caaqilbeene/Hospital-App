@@ -19,14 +19,14 @@ class EmailOtpService {
     final cleanEmail = email.trim().toLowerCase();
     final random = Random.secure();
     final code = (100000 + random.nextInt(900000)).toString();
-    final expiry = DateTime.now().add(const Duration(minutes: 20));
+    final expiry = DateTime.now().add(const Duration(minutes: 10));
     _activeOtps[cleanEmail] = _OtpData(
       code: code,
       expiresAt: expiry,
     );
     _lastGeneratedCode = code;
     _lastExpiry = expiry;
-    debugPrint("[EMAIL_OTP] Generated 6-digit OTP for $cleanEmail: $code (valid for 20 minutes)");
+    debugPrint("[EMAIL_OTP] Generated 6-digit OTP for $cleanEmail: $code (valid for 10 minutes)");
     return code;
   }
 

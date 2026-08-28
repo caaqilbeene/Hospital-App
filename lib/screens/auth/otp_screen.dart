@@ -513,7 +513,7 @@ class _OtpScreenState extends State<OtpScreen> {
                           ),
                         ),
                         Text(
-                          'Code valid for 20 mins',
+                          'Code valid for 10 mins',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,

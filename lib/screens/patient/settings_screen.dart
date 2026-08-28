@@ -218,13 +218,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         hint: 'Enter your new email',
                                         initialValue: user?.email ?? '',
                                         onSave: (val) async {
-                                          try {
-                                            await appState.updateProfile(email: val);
+                                          final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                                          if (!emailRegex.hasMatch(val.trim())) {
                                             if (context.mounted) {
                                               ScaffoldMessenger.of(context).showSnackBar(
                                                 const SnackBar(
-                                                  content: Text('your email was updated.'),
-                                                  backgroundColor: Colors.green,
+                                                  content: Text('Please enter a valid email address (e.g. name@gmail.com).'),
+                                                  backgroundColor: AppTheme.primaryColor,
+                                                ),
+                                              );
+                                            }
+                                            throw Exception('Invalid email format');
+                                          }
+                                          try {
+                                            await appState.updateProfile(email: val.trim());
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('Email updated successfully.'),
+                                                  backgroundColor: AppTheme.primaryColor,
                                                 ),
                                               );
                                             }
@@ -232,7 +244,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             if (context.mounted) {
                                               ScaffoldMessenger.of(context).showSnackBar(
                                                 SnackBar(
-                                                  content: Text('Supabase Error: $e'),
+                                                  content: Text('Update Error: $e'),
                                                   backgroundColor: AppTheme.errorRed,
                                                 ),
                                               );

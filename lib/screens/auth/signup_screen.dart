@@ -319,9 +319,6 @@ class _SignupScreenState extends State<SignupScreen> {
                         email: email,
                         recipientName: name,
                       );
-                      try {
-                        await SupabaseService.instance.sendEmailOtp(email);
-                      } catch (_) {}
 
                       if (!mounted) return;
                       setState(() => _isLoading = false);

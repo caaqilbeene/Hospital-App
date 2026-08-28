@@ -212,9 +212,6 @@ class _OtpScreenState extends State<OtpScreen> {
           email: widget.email!,
           recipientName: widget.name ?? 'Client',
         );
-        try {
-          await SupabaseService.instance.sendEmailOtp(widget.email!);
-        } catch (_) {}
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

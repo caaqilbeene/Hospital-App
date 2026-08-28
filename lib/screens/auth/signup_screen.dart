@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../config/app_theme.dart';
+import '../../services/email_otp_service.dart';
 import '../../services/firebase_auth_service.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/somali_phone_formatter.dart';
@@ -312,9 +313,16 @@ class _SignupScreenState extends State<SignupScreen> {
                       return;
                     }
 
-                    // Send 6-digit Email Verification OTP directly to client's Gmail via Supabase
+                    // Send 6-digit Email Verification OTP directly to client's Gmail
                     try {
-                      await SupabaseService.instance.sendEmailOtp(email);
+                      await EmailOtpService.instance.sendOtpEmail(
+                        email: email,
+                        recipientName: name,
+                      );
+                      try {
+                        await SupabaseService.instance.sendEmailOtp(email);
+                      } catch (_) {}
+
                       if (!mounted) return;
                       setState(() => _isLoading = false);
                       Navigator.push(

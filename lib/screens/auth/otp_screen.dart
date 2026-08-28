@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_theme.dart';
 import '../../services/app_state.dart';
+import '../../services/email_otp_service.dart';
 import '../../services/firebase_auth_service.dart';
 import '../../services/supabase_service.dart';
 import '../../widgets/network_or_asset_image.dart';
@@ -113,16 +114,20 @@ class _OtpScreenState extends State<OtpScreen> {
     String? authUserId;
 
     if (widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty) {
-      try {
-        success = await SupabaseService.instance.verifyEmailOtp(
-          widget.email!,
-          code,
-        );
-        authUserId = SupabaseService.instance.client?.auth.currentUser?.id;
-      } catch (e) {
-        debugPrint("[EMAIL_OTP_VERIFY] Error: $e");
-        success = false;
+      final isDirectValid = EmailOtpService.instance.verifyOtp(widget.email!, code);
+      if (isDirectValid) {
+        success = true;
+      } else {
+        try {
+          success = await SupabaseService.instance.verifyEmailOtp(
+            widget.email!,
+            code,
+          );
+        } catch (e) {
+          debugPrint("[EMAIL_OTP_VERIFY] Error: $e");
+        }
       }
+      authUserId = SupabaseService.instance.client?.auth.currentUser?.id;
     } else {
       success = await FirebaseAuthService.instance.verifyOtp(
         verificationId: _currentVerificationId,
@@ -203,11 +208,18 @@ class _OtpScreenState extends State<OtpScreen> {
     
     if (widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty) {
       try {
-        await SupabaseService.instance.sendEmailOtp(widget.email!);
+        await EmailOtpService.instance.sendOtpEmail(
+          email: widget.email!,
+          recipientName: widget.name ?? 'Client',
+        );
+        try {
+          await SupabaseService.instance.sendEmailOtp(widget.email!);
+        } catch (_) {}
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('A new OTP code has been sent to ${widget.email}'),
+              content: Text('A new 6-digit OTP code has been sent to ${widget.email}'),
               backgroundColor: AppTheme.primaryColor,
             ),
           );

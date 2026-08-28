@@ -242,6 +242,37 @@ class SupabaseService {
 
   // Auth Methods
 
+  Future<bool> sendEmailOtp(String email) async {
+    if (client == null || !isInitialized) return false;
+    try {
+      await client!.auth.signInWithOtp(
+        email: email.trim(),
+        shouldCreateUser: true,
+      );
+      debugPrint("[SUPABASE_EMAIL_OTP] Code successfully sent to $email");
+      return true;
+    } catch (e) {
+      debugPrint("[SUPABASE_EMAIL_OTP] Send Error: $e");
+      rethrow;
+    }
+  }
+
+  Future<bool> verifyEmailOtp(String email, String token) async {
+    if (client == null || !isInitialized) return false;
+    try {
+      final res = await client!.auth.verifyOTP(
+        email: email.trim(),
+        token: token.trim(),
+        type: OtpType.email,
+      );
+      debugPrint("[SUPABASE_EMAIL_OTP] Verified successfully. User: ${res.user?.id}");
+      return res.session != null || res.user != null;
+    } catch (e) {
+      debugPrint("[SUPABASE_EMAIL_OTP] Verify Error: $e");
+      rethrow;
+    }
+  }
+
   Future<bool> sendOtp(String phoneNumber) async {
     if (client == null) return true; // Mock success
     try {

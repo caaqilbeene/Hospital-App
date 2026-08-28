@@ -35,12 +35,14 @@ class OtpScreen extends StatefulWidget {
   final String verificationId;
   final String? name;
   final String? email;
+  final bool isEmailOtp;
   const OtpScreen({
     super.key,
     required this.phoneNumber,
     required this.verificationId,
     this.name,
     this.email,
+    this.isEmailOtp = false,
   });
 
   @override
@@ -107,31 +109,37 @@ class _OtpScreenState extends State<OtpScreen> {
 
     setState(() => _isVerifying = true);
 
-    final success = await FirebaseAuthService.instance.verifyOtp(
-      verificationId: _currentVerificationId,
-      smsCode: code,
-    );
+    bool success = false;
+    String? authUserId;
+
+    if (widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty) {
+      try {
+        success = await SupabaseService.instance.verifyEmailOtp(
+          widget.email!,
+          code,
+        );
+        authUserId = SupabaseService.instance.client?.auth.currentUser?.id;
+      } catch (e) {
+        debugPrint("[EMAIL_OTP_VERIFY] Error: $e");
+        success = false;
+      }
+    } else {
+      success = await FirebaseAuthService.instance.verifyOtp(
+        verificationId: _currentVerificationId,
+        smsCode: code,
+      );
+      authUserId = FirebaseAuth.instance.currentUser?.uid;
+    }
 
     setState(() => _isVerifying = false);
 
     if (success) {
       if (!mounted) return;
+      final String uid = authUserId ?? 'user_${DateTime.now().millisecondsSinceEpoch}';
       
-      final fbUser = FirebaseAuth.instance.currentUser;
-      if (fbUser == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Firebase User Session invalid. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-      final String uid = fbUser.uid;
-
       // Ensure normalized phone in E.164 (+252...)
       String normPhone = widget.phoneNumber.trim();
-      if (!normPhone.startsWith('+')) {
+      if (normPhone.isNotEmpty && !normPhone.startsWith('+')) {
         String digits = normPhone.replaceAll(RegExp(r'\D'), '');
         if (digits.startsWith('252')) {
           digits = digits.substring(3);
@@ -148,40 +156,28 @@ class _OtpScreenState extends State<OtpScreen> {
 
         try {
           final client = SupabaseService.instance.client;
-          if (client == null || !SupabaseService.instance.isInitialized) {
-            throw Exception("Supabase client is not initialized.");
+          if (client != null && SupabaseService.instance.isInitialized) {
+            await client.from('patients').upsert({
+              'id': uid,
+              'user_id': uid,
+              'full_name': name,
+              'phone_number': normPhone.isNotEmpty ? normPhone : email,
+              'phone': normPhone,
+              'email': email,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+            }).select();
           }
-
-          final response = await client.from('patients').upsert({
-            'id': uid,
-            'user_id': uid,
-            'full_name': name,
-            'phone_number': normPhone,
-            'email': email,
-            'created_at': DateTime.now().toUtc().toIso8601String(),
-          }).select();
-
-          debugPrint('Supabase patient inserted successfully: $response');
         } catch (e) {
           debugPrint('SUPABASE_INSERT_ERROR: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Supabase Error: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return; // DO NOT navigate if DB insertion fails!
         }
 
         context.read<AppState>().registerUser(
           name: name,
-          phone: normPhone,
+          phone: normPhone.isNotEmpty ? normPhone : email,
           email: email,
         );
       } else {
-        await context.read<AppState>().loadPatientProfileFromSupabase(normPhone);
+        await context.read<AppState>().loadPatientProfileFromSupabase(normPhone.isNotEmpty ? normPhone : widget.email);
       }
 
       Navigator.pushAndRemoveUntil(
@@ -193,9 +189,65 @@ class _OtpScreenState extends State<OtpScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Invalid or expired OTP code! Please try again.'),
+          content: Text('Invalid or expired OTP code! Please check and try again.'),
           backgroundColor: AppTheme.primaryColor,
         ),
+      );
+    }
+  }
+
+  void _resendOtp() async {
+    if (_secondsRemaining > 0) return;
+    
+    _startTimer();
+    
+    if (widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty) {
+      try {
+        await SupabaseService.instance.sendEmailOtp(widget.email!);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('A new OTP code has been sent to ${widget.email}'),
+              backgroundColor: AppTheme.primaryColor,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to resend Email OTP: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } else {
+      await FirebaseAuthService.instance.sendOtp(
+        phoneNumber: widget.phoneNumber,
+        onCodeSent: (newVerificationId) {
+          setState(() {
+            _currentVerificationId = newVerificationId;
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('A new OTP code has been sent to your phone.'),
+                backgroundColor: AppTheme.primaryColor,
+              ),
+            );
+          }
+        },
+        onFailed: (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to resend SMS: $error'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
       );
     }
   }
@@ -287,7 +339,9 @@ class _OtpScreenState extends State<OtpScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'A 6-digit code has been sent to\n${widget.phoneNumber}',
+                      widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty
+                          ? 'A 6-digit verification code has been sent to your email:\n${widget.email}'
+                          : 'A 6-digit code has been sent to\n${widget.phoneNumber}',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 14,

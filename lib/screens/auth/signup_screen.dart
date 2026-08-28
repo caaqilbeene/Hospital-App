@@ -233,11 +233,12 @@ class _SignupScreenState extends State<SignupScreen> {
                       return;
                     }
 
-                    // 3. Empty Email / Account Validation
-                    if (email.isEmpty) {
+                    // 3. Email Format & Validity Validation
+                    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                    if (email.isEmpty || !emailRegex.hasMatch(email)) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Please enter your email address.'),
+                          content: Text('Please enter a valid email address (e.g. name@gmail.com).'),
                           backgroundColor: AppTheme.primaryColor,
                         ),
                       );
@@ -303,7 +304,7 @@ class _SignupScreenState extends State<SignupScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'This phone number is already registered. Please use another number.',
+                            'This phone number is already registered. Please log in or use another number.',
                           ),
                           backgroundColor: AppTheme.primaryColor,
                         ),
@@ -311,35 +312,33 @@ class _SignupScreenState extends State<SignupScreen> {
                       return;
                     }
 
-                    // Send verification OTP code via Firebase without premature account creation
-                    await FirebaseAuthService.instance.sendOtp(
-                      phoneNumber: fullE164Number,
-                      onFailed: (errorMsg) {
-                        if (!mounted) return;
-                        setState(() => _isLoading = false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Firebase OTP failed: $errorMsg'),
-                            backgroundColor: AppTheme.primaryColor,
+                    // Send 6-digit Email Verification OTP directly to client's Gmail via Supabase
+                    try {
+                      await SupabaseService.instance.sendEmailOtp(email);
+                      if (!mounted) return;
+                      setState(() => _isLoading = false);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => OtpScreen(
+                            phoneNumber: fullE164Number,
+                            verificationId: 'EMAIL_OTP',
+                            name: name,
+                            email: email,
+                            isEmailOtp: true,
                           ),
-                        );
-                      },
-                      onCodeSent: (verificationId) {
-                        if (!mounted) return;
-                        setState(() => _isLoading = false);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => OtpScreen(
-                              phoneNumber: fullE164Number,
-                              verificationId: verificationId,
-                              name: name,
-                              email: email,
-                            ),
-                          ),
-                        );
-                      },
-                    );
+                        ),
+                      );
+                    } catch (e) {
+                      if (!mounted) return;
+                      setState(() => _isLoading = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to send verification code to $email: $e'),
+                          backgroundColor: AppTheme.primaryColor,
+                        ),
+                      );
+                    }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryColor,

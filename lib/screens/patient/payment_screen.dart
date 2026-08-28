@@ -1106,23 +1106,81 @@ void _showPaymentSuccessDialog({
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Align(
-                  alignment: Alignment.topRight,
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      color: Color(0xFF1E562A),
-                    ),
-                    onPressed: () {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MainPatientLayout(),
+                // Top Bar with Close button and quick Share Icon
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () async {
+                        final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+                        final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
+
+                        final receiptText = StringBuffer()
+                          ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
+                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                          ..writeln('✅ *Status:* PAID')
+                          ..writeln('🧾 *Receipt No:* $cleanOrderId')
+                          ..writeln('📅 *Date:* $nowStr')
+                          ..writeln('🩺 *Service:* $serviceTitle')
+                          ..writeln('📍 *Address:* $cleanAddress')
+                          ..writeln('💳 *Payment Method:* $paymentMethod')
+                          ..writeln('💵 *TOTAL PAID:* \$${totalAmount.toStringAsFixed(2)}')
+                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                          ..writeln('Thank you for choosing Nasiib Hospital!');
+
+                        await Share.share(
+                          receiptText.toString(),
+                          subject: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFF00A86B),
+                            width: 1.5,
+                          ),
                         ),
-                        (route) => false,
-                      );
-                    },
-                  ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.ios_share_rounded,
+                              color: Color(0xFF00A86B),
+                              size: 16,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Share Receipt',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF00A86B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Color(0xFF1E562A),
+                      ),
+                      onPressed: () {
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const MainPatientLayout(),
+                          ),
+                          (route) => false,
+                        );
+                      },
+                    ),
+                  ],
                 ),
                 Container(
                   width: 80,

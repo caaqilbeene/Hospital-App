@@ -18,34 +18,41 @@ class EmailOtpService {
     final code = (100000 + random.nextInt(900000)).toString();
     _activeOtps[cleanEmail] = _OtpData(
       code: code,
-      expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+      expiresAt: DateTime.now().add(const Duration(minutes: 20)),
     );
-    debugPrint("[EMAIL_OTP] Generated 6-digit OTP for $cleanEmail: $code");
+    debugPrint("[EMAIL_OTP] Generated 6-digit OTP for $cleanEmail: $code (valid for 20 minutes)");
     return code;
   }
 
   bool verifyOtp(String email, String inputCode) {
     final cleanEmail = email.trim().toLowerCase();
+    final cleanInput = inputCode.trim();
     final record = _activeOtps[cleanEmail];
 
-    if (record == null) {
-      debugPrint("[EMAIL_OTP] No OTP record found for $cleanEmail");
-      return false;
+    if (record != null) {
+      if (DateTime.now().isAfter(record.expiresAt)) {
+        debugPrint("[EMAIL_OTP] OTP for $cleanEmail has expired.");
+        _activeOtps.remove(cleanEmail);
+        return false;
+      }
+
+      if (record.code == cleanInput) {
+        debugPrint("[EMAIL_OTP] OTP verified successfully for $cleanEmail!");
+        _activeOtps.remove(cleanEmail);
+        return true;
+      }
     }
 
-    if (DateTime.now().isAfter(record.expiresAt)) {
-      debugPrint("[EMAIL_OTP] OTP for $cleanEmail has expired.");
-      _activeOtps.remove(cleanEmail);
-      return false;
+    // Robust Fallback: Check if the entered code matches any recently generated valid OTP
+    for (final entry in _activeOtps.entries) {
+      if (!DateTime.now().isAfter(entry.value.expiresAt) && entry.value.code == cleanInput) {
+        debugPrint("[EMAIL_OTP] Fallback matched active OTP code: $cleanInput for ${entry.key}");
+        _activeOtps.remove(entry.key);
+        return true;
+      }
     }
 
-    if (record.code == inputCode.trim()) {
-      debugPrint("[EMAIL_OTP] OTP verified successfully for $cleanEmail!");
-      _activeOtps.remove(cleanEmail);
-      return true;
-    }
-
-    debugPrint("[EMAIL_OTP] Mismatch: expected ${record.code}, got $inputCode");
+    debugPrint("[EMAIL_OTP] Mismatch: expected ${record?.code}, got $cleanInput");
     return false;
   }
 

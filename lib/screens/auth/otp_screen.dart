@@ -452,64 +452,78 @@ class _OtpScreenState extends State<OtpScreen> {
                           onTap: () async {
                             if (_secondsRemaining == 0) {
                               _startTimer();
-                              await FirebaseAuthService.instance.sendOtp(
-                                phoneNumber: widget.phoneNumber,
-                                onFailed: (errorMsg) {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Resend failed: $errorMsg',
-                                        ),
-                                        backgroundColor: Colors.red,
+
+                              if (widget.isEmailOtp && widget.email != null && widget.email!.isNotEmpty) {
+                                await EmailOtpService.instance.sendOtpEmail(
+                                  email: widget.email!,
+                                  recipientName: widget.name ?? 'Patient',
+                                );
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'A new 6-digit OTP code has been sent to ${widget.email!}',
                                       ),
-                                    );
-                                  }
-                                },
-                                onCodeSent: (newVerificationId) {
-                                  if (mounted) {
-                                    setState(() {
-                                      _currentVerificationId =
-                                          newVerificationId;
-                                    });
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'OTP code has been resent!',
+                                      backgroundColor: AppTheme.primaryColor,
+                                    ),
+                                  );
+                                }
+                              } else {
+                                await FirebaseAuthService.instance.sendOtp(
+                                  phoneNumber: widget.phoneNumber,
+                                  onFailed: (errorMsg) {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Resend failed: $errorMsg',
+                                          ),
+                                          backgroundColor: Colors.red,
                                         ),
-                                      ),
-                                    );
-                                  }
-                                },
-                              );
+                                      );
+                                    }
+                                  },
+                                  onCodeSent: (newVerificationId) {
+                                    if (mounted) {
+                                      setState(() {
+                                        _currentVerificationId =
+                                            newVerificationId;
+                                      });
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'OTP code has been resent!',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                );
+                              }
                             }
                           },
                           child: Text(
                             'Resend Code',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textSecondary,
+                              fontWeight: FontWeight.bold,
+                              color: _secondsRemaining == 0 ? AppTheme.primaryColor : AppTheme.textSecondary,
                               decoration: TextDecoration.underline,
                             ),
                           ),
                         ),
-                        GestureDetector(
-                          onTap: () {},
-                          child: Text(
-                            'Need Help?',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textSecondary,
-                              decoration: TextDecoration.underline,
-                            ),
+                        Text(
+                          'Code valid for 20 mins',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF64748B),
                           ),
                         ),
                       ],
                     ),
 
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
 
                     // Progress Slider / Line Timer (Matching Image 5)
                     ClipRRect(
@@ -527,11 +541,13 @@ class _OtpScreenState extends State<OtpScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        '${_secondsRemaining}s remaining',
+                        _secondsRemaining > 0
+                            ? 'Resend available in: ${_secondsRemaining}s'
+                            : 'Did not receive code? Tap "Resend Code" above',
                         style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
+                          color: _secondsRemaining > 0 ? AppTheme.textSecondary : AppTheme.primaryColor,
                         ),
                       ),
                     ),

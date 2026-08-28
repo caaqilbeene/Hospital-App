@@ -528,27 +528,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 try {
                   final userPhone = appState.currentUser?.phoneNumber ?? '';
-                  await appState.deleteUserAccount(userPhone);
+                  await Future.any([
+                    appState.deleteUserAccount(userPhone),
+                    Future.delayed(const Duration(seconds: 3)),
+                  ]);
                   await appState.logout();
                 } catch (e) {
                   debugPrint("Account deletion notice: $e");
                   await appState.logout();
-                }
-
-                if (context.mounted) {
-                  Navigator.of(context, rootNavigator: true).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Akoonkaaga si joogto ah ayaa loo tirtiray (Account Deleted Successfully).'),
-                      backgroundColor: Color(0xFFDC2626),
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                    (route) => false,
-                  );
+                } finally {
+                  if (context.mounted) {
+                    Navigator.of(context, rootNavigator: true).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Akoonkaaga si joogto ah ayaa loo tirtiray (Account Deleted Successfully).'),
+                        backgroundColor: Color(0xFFDC2626),
+                        duration: Duration(seconds: 3),
+                      ),
+                    );
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (route) => false,
+                    );
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(

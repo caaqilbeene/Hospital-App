@@ -1350,7 +1350,11 @@ class AppState extends ChangeNotifier {
       for (final id in possibleFormats) {
         if (id.isNotEmpty) {
           try {
-            await FirebaseFirestore.instance.collection('users').doc(id).delete();
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(id)
+                .delete()
+                .timeout(const Duration(seconds: 2));
           } catch (_) {}
         }
       }
@@ -1359,18 +1363,20 @@ class AppState extends ChangeNotifier {
           final q1 = await FirebaseFirestore.instance
               .collection('users')
               .where('phoneNumber', whereIn: possibleFormats)
-              .get();
+              .get()
+              .timeout(const Duration(seconds: 2));
           for (final doc in q1.docs) {
-            await doc.reference.delete();
+            await doc.reference.delete().timeout(const Duration(seconds: 2));
           }
         } catch (_) {}
         try {
           final q2 = await FirebaseFirestore.instance
               .collection('users')
               .where('phone_number', whereIn: possibleFormats)
-              .get();
+              .get()
+              .timeout(const Duration(seconds: 2));
           for (final doc in q2.docs) {
-            await doc.reference.delete();
+            await doc.reference.delete().timeout(const Duration(seconds: 2));
           }
         } catch (_) {}
       }
@@ -1378,7 +1384,7 @@ class AppState extends ChangeNotifier {
       final currentFbUser = FirebaseAuth.instance.currentUser;
       if (currentFbUser != null) {
         try {
-          await currentFbUser.delete();
+          await currentFbUser.delete().timeout(const Duration(seconds: 2));
         } catch (e) {
           debugPrint("[FIRESTORE_AUTH] User delete auth notice: $e");
         }
@@ -1390,10 +1396,12 @@ class AppState extends ChangeNotifier {
 
     // 2. Permanently delete from Supabase patients table & Storage
     try {
-      await SupabaseService.instance.deleteUserData(
-        fullE164.isNotEmpty ? fullE164 : targetPhone,
-        userId: _currentUser?.id,
-      );
+      await SupabaseService.instance
+          .deleteUserData(
+            fullE164.isNotEmpty ? fullE164 : targetPhone,
+            userId: _currentUser?.id,
+          )
+          .timeout(const Duration(seconds: 2));
       debugPrint("[SUPABASE] Permanently deleted user from Supabase patients.");
     } catch (e) {
       debugPrint("[SUPABASE] Delete user error: $e");

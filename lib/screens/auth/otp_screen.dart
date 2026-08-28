@@ -180,23 +180,17 @@ class _OtpScreenState extends State<OtpScreen> {
                 'phone_number': normPhone.isNotEmpty ? normPhone : email,
                 'email': email,
                 'created_at': DateTime.now().toUtc().toIso8601String(),
-              });
+              }).timeout(const Duration(seconds: 2));
               debugPrint('[SUPABASE] Saved patient with UUID: $validUuid, phone: $normPhone');
             } catch (supaErr) {
-              debugPrint('[SUPABASE] Primary upsert error: $supaErr, attempting insert without id...');
-              await client.from('patients').insert({
-                'full_name': name,
-                'phone_number': normPhone.isNotEmpty ? normPhone : email,
-                'email': email,
-                'created_at': DateTime.now().toUtc().toIso8601String(),
-              });
+              debugPrint('[SUPABASE] Primary upsert notice: $supaErr');
             }
           }
         } catch (e) {
           debugPrint('SUPABASE_INSERT_ERROR: $e');
         }
 
-        // Dual persistence in Firestore users collection
+        // Dual persistence in Firestore users collection (with safe timeout)
         try {
           await FirebaseFirestore.instance.collection('users').doc(normPhone).set({
             'id': validUuid,
@@ -206,7 +200,7 @@ class _OtpScreenState extends State<OtpScreen> {
             'phone': normPhone,
             'email': email,
             'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+          }, SetOptions(merge: true)).timeout(const Duration(seconds: 2));
         } catch (e) {
           debugPrint('FIRESTORE_USER_SAVE_ERROR: $e');
         }
@@ -215,16 +209,26 @@ class _OtpScreenState extends State<OtpScreen> {
           name: name,
           phone: normPhone.isNotEmpty ? normPhone : email,
           email: email,
+          id: validUuid,
         );
       } else {
-        await context.read<AppState>().loadPatientProfileFromSupabase(normPhone.isNotEmpty ? normPhone : widget.email);
+        try {
+          await context
+              .read<AppState>()
+              .loadPatientProfileFromSupabase(
+                normPhone.isNotEmpty ? normPhone : widget.email,
+              )
+              .timeout(const Duration(seconds: 2));
+        } catch (_) {}
       }
 
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const MainPatientLayout()),
-        (route) => false,
-      );
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const MainPatientLayout()),
+          (route) => false,
+        );
+      }
     } else {
       if (!mounted) return;
       setState(() => _isVerifying = false);

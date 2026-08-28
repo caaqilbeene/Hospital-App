@@ -1489,10 +1489,11 @@ class AppState extends ChangeNotifier {
     required String name,
     required String phone,
     required String email,
+    String? id,
   }) async {
     final now = DateTime.now();
     final firebaseUid = FirebaseAuth.instance.currentUser?.uid;
-    final userId = firebaseUid ?? 'usr_${now.millisecondsSinceEpoch}';
+    final userId = id ?? firebaseUid ?? 'usr_${now.millisecondsSinceEpoch}';
 
     // Clear previous user's cached state, appointments, cart, and avatar
     _appointments.clear();

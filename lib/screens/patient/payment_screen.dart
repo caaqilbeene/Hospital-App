@@ -117,10 +117,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
       return;
     }
 
-    // 2. Validate EVC Plus & E-Dahab
+    // 2. Validate EVC Plus & E-Dahab strict prefixes
     if (_selectedMethod == _PayMethod.evcPlus ||
         _selectedMethod == _PayMethod.eDahab) {
-      final phoneError = validateSomaliPhoneNumber(_phoneController.text);
+      final rawInput = _phoneController.text.trim();
+      final phoneError = validateSomaliPhoneNumber(rawInput);
       if (phoneError != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -129,6 +130,40 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
         );
         return;
+      }
+
+      final digits = rawInput.replaceAll(RegExp(r'\D'), '');
+      String localPrefix = digits;
+      if (localPrefix.startsWith('252')) {
+        localPrefix = localPrefix.substring(3);
+      } else if (localPrefix.startsWith('0')) {
+        localPrefix = localPrefix.substring(1);
+      }
+
+      if (_selectedMethod == _PayMethod.evcPlus) {
+        if (!localPrefix.startsWith('61')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'EVC Plus accepts Hormuud numbers only (starting with 61).',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      } else if (_selectedMethod == _PayMethod.eDahab) {
+        if (!localPrefix.startsWith('62')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'E-Dahab accepts Somtel numbers only (starting with 62).',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
       }
     }
 
@@ -1149,249 +1184,262 @@ void _showPaymentSuccessDialog({
     context: context,
     barrierDismissible: false,
     builder: (ctx) {
-      return Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: Colors.white,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Top Close button only
-                Align(
-                  alignment: Alignment.topRight,
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      color: Color(0xFF64748B),
-                      size: 24,
-                    ),
-                    onPressed: () {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MainPatientLayout(),
-                        ),
-                        (route) => false,
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 6),
-
-                // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style)
-                RepaintBoundary(
-                  key: receiptRepaintKey,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 24,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.03),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Green Checkmark Icon Badge
-                        Container(
-                          width: 52,
-                          height: 52,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFD1FADF),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Center(
-                            child: Icon(
-                              Icons.check_rounded,
-                              color: Color(0xFF12B76A),
-                              size: 32,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Payment Successful',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF0F172A),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Nasiib Hospital',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF0D7C66),
-                          ),
-                        ),
-                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
-
-                        // Date & Receipt ID
-                        _dialogRow('Date', nowStr),
-                        const SizedBox(height: 8),
-                        _dialogRow('Receipt ID', cleanOrderId),
-                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
-
-                        // Service & Items Details
-                        _dialogRow(
-                          isNurse ? 'Service' : 'Items',
-                          serviceTitle,
-                        ),
-                        const SizedBox(height: 8),
-                        _dialogRow('Address', cleanAddress),
-                        const SizedBox(height: 8),
-                        _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),
-                        const SizedBox(height: 8),
-                        _dialogRow('Delivery Fee', 'Free'),
-                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
-
-                        // Payment Method & Total
-                        _dialogRow('Payment Method', paymentMethod),
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Total Paid',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                                color: const Color(0xFF0F172A),
-                              ),
-                            ),
-                            Text(
-                              '\$${totalAmount.toStringAsFixed(2)}',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                                color: const Color(0xFF0D7C66),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
-
-                        // Footer note
-                        Text(
-                          'Thank you for your purchase!',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF475569),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // 📤 Share Receipt Button (Clean text link with icon, no container border)
-                TextButton.icon(
-                  onPressed: () => captureAndShareReceipt(),
-                  icon: const Icon(
-                    Icons.ios_share_rounded,
-                    color: Color(0xFF00A86B),
-                    size: 20,
-                  ),
-                  label: Text(
-                    'Share Receipt',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF00A86B),
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // GO TO HOME Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MainPatientLayout(),
-                        ),
-                        (route) => false,
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1A1F36),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const MainPatientLayout(),
+            ),
+            (route) => false,
+          );
+        },
+        child: Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          backgroundColor: Colors.white,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Top Close button only
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Color(0xFF64748B),
+                        size: 24,
                       ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'GO TO HOME',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-                if (!isNurse) ...[
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton(
                       onPressed: () {
                         Navigator.pushAndRemoveUntil(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const MyOrdersScreen(),
+                            builder: (_) => const MainPatientLayout(),
                           ),
-                          (route) => route.isFirst,
+                          (route) => false,
                         );
                       },
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(
-                          color: Color(0xFF1E562A),
-                          width: 1.5,
-                        ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+
+                  // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style)
+                  RepaintBoundary(
+                    key: receiptRepaintKey,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 24,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.03),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Green Checkmark Icon Badge
+                          Container(
+                            width: 52,
+                            height: 52,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFD1FADF),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.check_rounded,
+                                color: Color(0xFF12B76A),
+                                size: 32,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Payment Successful',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Nasiib Hospital',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF0D7C66),
+                            ),
+                          ),
+                          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                          // Date & Receipt ID
+                          _dialogRow('Date', nowStr),
+                          const SizedBox(height: 8),
+                          _dialogRow('Receipt ID', cleanOrderId),
+                          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                          // Service & Items Details
+                          _dialogRow(
+                            isNurse ? 'Service' : 'Items',
+                            serviceTitle,
+                          ),
+                          const SizedBox(height: 8),
+                          _dialogRow('Address', cleanAddress),
+                          const SizedBox(height: 8),
+                          _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),
+                          const SizedBox(height: 8),
+                          _dialogRow('Delivery Fee', 'Free'),
+                          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                          // Payment Method & Total
+                          _dialogRow('Payment Method', paymentMethod),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Total Paid',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF0F172A),
+                                ),
+                              ),
+                              Text(
+                                '\$${totalAmount.toStringAsFixed(2)}',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFF0D7C66),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                          // Footer note
+                          Text(
+                            'Thank you for your purchase!',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF475569),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 📤 Share Receipt Button (Clean text link with icon, no container border)
+                  TextButton.icon(
+                    onPressed: () => captureAndShareReceipt(),
+                    icon: const Icon(
+                      Icons.ios_share_rounded,
+                      color: Color(0xFF00A86B),
+                      size: 20,
+                    ),
+                    label: Text(
+                      'Share Receipt',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF00A86B),
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // GO TO HOME Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const MainPatientLayout(),
+                          ),
+                          (route) => false,
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1A1F36),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(24),
                         ),
+                        elevation: 0,
                       ),
                       child: Text(
-                        'TRACK ORDER',
+                        'GO TO HOME',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: const Color(0xFF1E562A),
+                          color: Colors.white,
                           letterSpacing: 0.5,
                         ),
                       ),
                     ),
                   ),
+                  if (!isNurse) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pushAndRemoveUntil(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MyOrdersScreen(),
+                            ),
+                            (route) => route.isFirst,
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(
+                            color: Color(0xFF1E562A),
+                            width: 1.5,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          'TRACK ORDER',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF1E562A),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

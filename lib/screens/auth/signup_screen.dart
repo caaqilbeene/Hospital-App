@@ -280,12 +280,15 @@ class _SignupScreenState extends State<SignupScreen> {
 
                     setState(() => _isLoading = true);
 
-                    // 2. Check if account already exists strictly in Supabase public.patients
-                    bool alreadyExists = false;
+                    // 2. Check if phone number or email already exists in Supabase public.patients
+                    bool phoneAlreadyExists = false;
+                    bool emailAlreadyExists = false;
+
                     try {
                       final client = SupabaseService.instance.client;
                       if (client != null &&
                           SupabaseService.instance.isInitialized) {
+                        // 2a. Check Phone Number
                         try {
                           final supaCheck = await client
                               .from('patients')
@@ -293,10 +296,10 @@ class _SignupScreenState extends State<SignupScreen> {
                               .inFilter('phone_number', possibleFormats)
                               .limit(1)
                               .maybeSingle();
-                          if (supaCheck != null) alreadyExists = true;
+                          if (supaCheck != null) phoneAlreadyExists = true;
                         } catch (_) {}
 
-                        if (!alreadyExists) {
+                        if (!phoneAlreadyExists) {
                           try {
                             final supaCheck2 = await client
                                 .from('patients')
@@ -304,7 +307,20 @@ class _SignupScreenState extends State<SignupScreen> {
                                 .inFilter('phone', possibleFormats)
                                 .limit(1)
                                 .maybeSingle();
-                            if (supaCheck2 != null) alreadyExists = true;
+                            if (supaCheck2 != null) phoneAlreadyExists = true;
+                          } catch (_) {}
+                        }
+
+                        // 2b. Check Email Address
+                        if (email.isNotEmpty) {
+                          try {
+                            final emailCheck = await client
+                                .from('patients')
+                                .select('id')
+                                .ilike('email', email.trim().toLowerCase())
+                                .limit(1)
+                                .maybeSingle();
+                            if (emailCheck != null) emailAlreadyExists = true;
                           } catch (_) {}
                         }
                       }
@@ -312,13 +328,27 @@ class _SignupScreenState extends State<SignupScreen> {
                       debugPrint("Supabase signup check error: $e");
                     }
 
-                    if (alreadyExists) {
+                    if (phoneAlreadyExists) {
                       if (!mounted) return;
                       setState(() => _isLoading = false);
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
                             'This phone number is already registered. Please log in or use another number.',
+                          ),
+                          backgroundColor: AppTheme.primaryColor,
+                        ),
+                      );
+                      return;
+                    }
+
+                    if (emailAlreadyExists) {
+                      if (!mounted) return;
+                      setState(() => _isLoading = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'This email address is already registered. Please log in or use another email.',
                           ),
                           backgroundColor: AppTheme.primaryColor,
                         ),

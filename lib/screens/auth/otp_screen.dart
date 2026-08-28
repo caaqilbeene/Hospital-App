@@ -170,17 +170,22 @@ class _OtpScreenState extends State<OtpScreen> {
         final String name = widget.name!.trim().isNotEmpty ? widget.name!.trim() : 'Patient';
         final String email = widget.email ?? '';
 
+        final String nowUtc = DateTime.now().toUtc().toIso8601String();
+
+        // 1. SUPABASE SYNC (public.patients)
         try {
           final client = SupabaseService.instance.client;
           if (client != null && SupabaseService.instance.isInitialized) {
             try {
               await client.from('patients').upsert({
                 'id': validUuid,
+                'user_id': validUuid,
                 'full_name': name,
                 'phone_number': normPhone.isNotEmpty ? normPhone : email,
+                'phone': normPhone,
                 'email': email,
-                'created_at': DateTime.now().toUtc().toIso8601String(),
-              }).timeout(const Duration(seconds: 2));
+                'created_at': nowUtc,
+              }).timeout(const Duration(seconds: 3));
               debugPrint('[SUPABASE] Saved patient with UUID: $validUuid, phone: $normPhone');
             } catch (supaErr) {
               debugPrint('[SUPABASE] Primary upsert notice: $supaErr');
@@ -190,17 +195,39 @@ class _OtpScreenState extends State<OtpScreen> {
           debugPrint('SUPABASE_INSERT_ERROR: $e');
         }
 
-        // Dual persistence in Firestore users collection (with safe timeout)
+        // 2. FIRESTORE SYNC (users collection)
         try {
-          await FirebaseFirestore.instance.collection('users').doc(normPhone).set({
+          final Map<String, dynamic> fireData = {
             'id': validUuid,
+            'uid': validUuid,
             'fullName': name,
             'name': name,
             'phoneNumber': normPhone,
             'phone': normPhone,
             'email': email,
             'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true)).timeout(const Duration(seconds: 2));
+          };
+
+          if (normPhone.isNotEmpty) {
+            await FirebaseFirestore.instance.collection('users').doc(normPhone).set(
+              fireData,
+              SetOptions(merge: true),
+            ).timeout(const Duration(seconds: 3));
+          }
+
+          final rawDigits = normPhone.replaceAll(RegExp(r'\D'), '');
+          if (rawDigits.isNotEmpty && rawDigits != normPhone) {
+            await FirebaseFirestore.instance.collection('users').doc(rawDigits).set(
+              fireData,
+              SetOptions(merge: true),
+            ).timeout(const Duration(seconds: 3));
+          }
+
+          await FirebaseFirestore.instance.collection('users').doc(validUuid).set(
+            fireData,
+            SetOptions(merge: true),
+          ).timeout(const Duration(seconds: 3));
+          debugPrint('[FIRESTORE] Patient synced across Firestore users collection.');
         } catch (e) {
           debugPrint('FIRESTORE_USER_SAVE_ERROR: $e');
         }

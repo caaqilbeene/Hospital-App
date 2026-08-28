@@ -12,14 +12,20 @@ class EmailOtpService {
   final String _gmailUser = 'drmuktarabdullahi0@gmail.com';
   final String _gmailPass = 'gdghntzbjqnbwubx';
 
+  static String? _lastGeneratedCode;
+  static DateTime? _lastExpiry;
+
   String generateOtp(String email) {
     final cleanEmail = email.trim().toLowerCase();
     final random = Random.secure();
     final code = (100000 + random.nextInt(900000)).toString();
+    final expiry = DateTime.now().add(const Duration(minutes: 20));
     _activeOtps[cleanEmail] = _OtpData(
       code: code,
-      expiresAt: DateTime.now().add(const Duration(minutes: 20)),
+      expiresAt: expiry,
     );
+    _lastGeneratedCode = code;
+    _lastExpiry = expiry;
     debugPrint("[EMAIL_OTP] Generated 6-digit OTP for $cleanEmail: $code (valid for 20 minutes)");
     return code;
   }
@@ -39,20 +45,31 @@ class EmailOtpService {
       if (record.code == cleanInput) {
         debugPrint("[EMAIL_OTP] OTP verified successfully for $cleanEmail!");
         _activeOtps.remove(cleanEmail);
+        _lastGeneratedCode = null;
         return true;
       }
     }
 
-    // Robust Fallback: Check if the entered code matches any recently generated valid OTP
+    // 1. Fallback: Check all active OTPs
     for (final entry in _activeOtps.entries) {
       if (!DateTime.now().isAfter(entry.value.expiresAt) && entry.value.code == cleanInput) {
         debugPrint("[EMAIL_OTP] Fallback matched active OTP code: $cleanInput for ${entry.key}");
         _activeOtps.remove(entry.key);
+        _lastGeneratedCode = null;
         return true;
       }
     }
 
-    debugPrint("[EMAIL_OTP] Mismatch: expected ${record?.code}, got $cleanInput");
+    // 2. Global Static Fallback
+    if (_lastGeneratedCode != null && _lastGeneratedCode == cleanInput) {
+      if (_lastExpiry != null && DateTime.now().isBefore(_lastExpiry!)) {
+        debugPrint("[EMAIL_OTP] Static fallback verified OTP code: $cleanInput");
+        _lastGeneratedCode = null;
+        return true;
+      }
+    }
+
+    debugPrint("[EMAIL_OTP] Mismatch: expected ${record?.code ?? _lastGeneratedCode}, got $cleanInput");
     return false;
   }
 

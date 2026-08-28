@@ -9,8 +9,8 @@ class EmailOtpService {
 
   final Map<String, _OtpData> _activeOtps = {};
 
-  final String _gmailUser = 'caaqilbeene@gmail.com';
-  final String _gmailPass = 'tlfilncaznzjvfml';
+  final String _gmailUser = 'drmuktarabdullahi0@gmail.com';
+  final String _gmailPass = 'gdghntzbjqnbwubx';
 
   String generateOtp(String email) {
     final cleanEmail = email.trim().toLowerCase();

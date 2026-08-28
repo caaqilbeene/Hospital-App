@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../config/app_theme.dart';
 import '../../models/appointment_model.dart';
@@ -1055,7 +1056,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
 }
 
 // ─────────────────────────────────────────────
-// Payment Success Dialog (unchanged logic)
+// Address cleaning & deduplication helper
+// ─────────────────────────────────────────────
+String _cleanFormattedAddress(String raw) {
+  if (raw.trim().isEmpty) return 'Mogadishu';
+  var cleaned = raw.replaceAll('Delivery: ', '').trim();
+  final parts = cleaned.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+  final seen = <String>{};
+  final result = <String>[];
+
+  for (final p in parts) {
+    final normalized = p.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    if (!seen.contains(normalized)) {
+      seen.add(normalized);
+      result.add(p);
+    }
+  }
+
+  return result.isNotEmpty ? result.join(', ') : 'Mogadishu';
+}
+
+// ─────────────────────────────────────────────
+// Payment Success Dialog (Pure English + Share Receipt)
 // ─────────────────────────────────────────────
 void _showPaymentSuccessDialog({
   required BuildContext context,
@@ -1067,6 +1089,9 @@ void _showPaymentSuccessDialog({
   bool isNurse = false,
   String? nurseName,
 }) {
+  final cleanAddress = _cleanFormattedAddress(address);
+  final cleanOrderId = orderId.startsWith('#') ? orderId : '#$orderId';
+
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -1124,10 +1149,10 @@ void _showPaymentSuccessDialog({
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  isNurse ? 'Ballanta Kalkaalisada Waa La Aqbalay!' : 'PAYMENT SUCCESSFUL!',
+                  'PAYMENT SUCCESSFUL!',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: isNurse ? 16 : 18,
+                    fontSize: 18,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.5,
                     color: const Color(0xFF1B5E20),
@@ -1136,7 +1161,7 @@ void _showPaymentSuccessDialog({
                 const SizedBox(height: 8),
                 Text(
                   isNurse
-                      ? 'Kalkaalisada ayaa kula soo xiriiri doonta goor dhow.'
+                      ? 'Thank you for your booking. The nurse will contact you shortly.'
                       : 'Thank you for your purchase. Your order has been placed and is being prepared.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
@@ -1160,17 +1185,17 @@ void _showPaymentSuccessDialog({
                     children: [
                       _dialogRow(
                         isNurse ? 'Booking ID' : 'Order ID',
-                        orderId.startsWith('#') ? orderId : '#$orderId',
+                        cleanOrderId,
                       ),
                       const SizedBox(height: 6),
                       _dialogRow(
-                        isNurse ? 'Kalkaalisada' : 'Items',
-                        isNurse ? (nurseName ?? 'Kalkaaliye') : '$itemCount Items',
+                        isNurse ? 'Nurse' : 'Items',
+                        isNurse ? (nurseName ?? 'Home Nurse Care') : '$itemCount Items',
                       ),
                       const SizedBox(height: 6),
                       _dialogRow(
-                        isNurse ? 'Cinwaanka (District)' : 'Address',
-                        address.isNotEmpty ? address : 'Mogadishu',
+                        'Address',
+                        cleanAddress,
                       ),
                       const SizedBox(height: 6),
                       _dialogRow('Payment', paymentMethod),
@@ -1199,46 +1224,72 @@ void _showPaymentSuccessDialog({
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
-                // 📥 Download / View Official Receipt Button
-                SizedBox(
+                // 📤 Share Receipt Button (Matching exact pill outline design)
+                Container(
                   width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      _showOfficialReceipt(
-                        context: context,
-                        orderId: orderId,
-                        totalAmount: totalAmount,
-                        paymentMethod: paymentMethod,
-                        address: address,
-                        isNurse: isNurse,
-                        nurseName: nurseName,
-                        itemCount: itemCount,
-                      );
-                    },
-                    icon: const Icon(Icons.download_rounded, color: Colors.white, size: 20),
-                    label: Text(
-                      'SOO DEJISO RASIIDKA (DOWNLOAD RECEIPT)',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 0.3,
-                      ),
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: const Color(0xFF00A86B),
+                      width: 1.8,
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E562A),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(28),
+                      onTap: () async {
+                        final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+                        final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
+
+                        final receiptText = StringBuffer()
+                          ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
+                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                          ..writeln('✅ *Status:* PAID')
+                          ..writeln('🧾 *Receipt No:* $cleanOrderId')
+                          ..writeln('📅 *Date:* $nowStr')
+                          ..writeln('🩺 *Service:* $serviceTitle')
+                          ..writeln('📍 *Address:* $cleanAddress')
+                          ..writeln('💳 *Payment Method:* $paymentMethod')
+                          ..writeln('💵 *TOTAL PAID:* \$${totalAmount.toStringAsFixed(2)}')
+                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                          ..writeln('Thank you for choosing Nasiib Hospital!');
+
+                        await Share.share(
+                          receiptText.toString(),
+                          subject: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
+                        );
+                      },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.ios_share_rounded,
+                            color: Color(0xFF00A86B),
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Share Receipt',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF00A86B),
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ],
                       ),
-                      elevation: 0,
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
+                // GO TO HOME Button
                 SizedBox(
                   width: double.infinity,
                   height: 48,
@@ -1312,192 +1363,6 @@ void _showPaymentSuccessDialog({
         ),
       );
     },
-  );
-}
-
-void _showOfficialReceipt({
-  required BuildContext context,
-  required String orderId,
-  required double totalAmount,
-  required String paymentMethod,
-  required String address,
-  required bool isNurse,
-  String? nurseName,
-  int itemCount = 1,
-}) {
-  final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
-
-  showDialog(
-    context: context,
-    builder: (ctx) => Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      backgroundColor: Colors.white,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E562A).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(
-                          Icons.local_hospital_rounded,
-                          color: Color(0xFF1E562A),
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'NASIIB HOSPITAL',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                              color: const Color(0xFF1E562A),
-                            ),
-                          ),
-                          Text(
-                            'Official Payment Receipt',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close_rounded, color: Colors.grey),
-                  ),
-                ],
-              ),
-              const Divider(height: 24, thickness: 1),
-
-              // Status Badge
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFF81C784)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.check_circle_rounded, color: Color(0xFF2E7D32), size: 16),
-                    SizedBox(width: 6),
-                    Text(
-                      'PAID / WAA LA BIXIYAY',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1B5E20),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Receipt Fields
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Column(
-                  children: [
-                    _dialogRow('Receipt No:', orderId.startsWith('#') ? orderId : '#$orderId'),
-                    const SizedBox(height: 8),
-                    _dialogRow('Taariikhda (Date):', nowStr),
-                    const SizedBox(height: 8),
-                    _dialogRow('Adeegga (Service):', isNurse ? (nurseName ?? 'Kalkaaliye Guriga') : 'Dawooyinka & Delivery ($itemCount items)'),
-                    const SizedBox(height: 8),
-                    _dialogRow('Goobta (Address):', address.isNotEmpty ? address : 'Mogadishu'),
-                    const SizedBox(height: 8),
-                    _dialogRow('Habka Lacagta:', paymentMethod),
-                    const Divider(height: 20, color: Color(0xFFCBD5E1)),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'TOTAL PAID:',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF1E562A),
-                          ),
-                        ),
-                        Text(
-                          '\$${totalAmount.toStringAsFixed(2)}',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF1E562A),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Download / Save Button
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Rasiidka si guul leh ayaa loo keydiyay (Receipt Saved)!'),
-                        backgroundColor: Color(0xFF1E562A),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    Navigator.pop(ctx);
-                  },
-                  icon: const Icon(Icons.file_download_done_rounded, color: Colors.white, size: 20),
-                  label: Text(
-                    'KEYDI RASIIDKA (SAVE RECEIPT)',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1E562A),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
   );
 }
 

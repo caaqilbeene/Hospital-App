@@ -344,6 +344,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             address: widget.booking.reasonForVisit.replaceAll('Delivery: ', ''),
             paymentMethod: _methodLabel,
             totalAmount: widget.booking.amount,
+            purchasedItems: items,
           );
         }
       } catch (e) {
@@ -1126,6 +1127,7 @@ void _showPaymentSuccessDialog({
   required double totalAmount,
   bool isNurse = false,
   String? nurseName,
+  List<Map<String, dynamic>>? purchasedItems,
 }) {
   final cleanAddress = _cleanFormattedAddress(address);
   final cleanOrderId = orderId.startsWith('#') ? orderId : '#$orderId';
@@ -1140,8 +1142,21 @@ void _showPaymentSuccessDialog({
       ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
       ..writeln('✅ *Status:* PAID')
       ..writeln('🧾 *Receipt ID:* $cleanOrderId')
-      ..writeln('📅 *Date:* $nowStr')
-      ..writeln('🩺 *Service:* $serviceTitle')
+      ..writeln('📅 *Date:* $nowStr');
+
+    if (purchasedItems != null && purchasedItems.isNotEmpty) {
+      receiptTextSummary.writeln('📋 *Items Purchased:*');
+      for (final it in purchasedItems) {
+        final qty = (it['quantity'] as num?)?.toInt() ?? 1;
+        final unitPrice = (it['price'] as num?)?.toDouble() ?? 0.0;
+        final itTotal = unitPrice * qty;
+        receiptTextSummary.writeln('  • ${it['name']} x$qty - \$${itTotal.toStringAsFixed(2)}');
+      }
+    } else {
+      receiptTextSummary.writeln('🩺 *Service:* $serviceTitle');
+    }
+
+    receiptTextSummary
       ..writeln('📍 *Address:* $cleanAddress')
       ..writeln('💳 *Payment Method:* $paymentMethod')
       ..writeln('💵 *Total Paid:* \$${totalAmount.toStringAsFixed(2)}')
@@ -1230,7 +1245,7 @@ void _showPaymentSuccessDialog({
                   ),
                   const SizedBox(height: 6),
 
-                  // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style)
+                  // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style with Itemized Medicines)
                   RepaintBoundary(
                     key: receiptRepaintKey,
                     child: Container(
@@ -1295,12 +1310,47 @@ void _showPaymentSuccessDialog({
                           _dialogRow('Receipt ID', cleanOrderId),
                           const Divider(height: 24, color: Color(0xFFE2E8F0)),
 
-                          // Service & Items Details
-                          _dialogRow(
-                            isNurse ? 'Service' : 'Items',
-                            serviceTitle,
-                          ),
-                          const SizedBox(height: 8),
+                          // 📋 Itemized Medicines / Service Details
+                          if (purchasedItems != null && purchasedItems.isNotEmpty) ...[
+                            for (final it in purchasedItems) ...[
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 3.0),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${it['name']} x${it['quantity'] ?? 1}',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFF334155),
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '\$${(((it['price'] as num?)?.toDouble() ?? 0.0) * ((it['quantity'] as num?)?.toInt() ?? 1)).toStringAsFixed(2)}',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 4),
+                          ] else ...[
+                            _dialogRow(
+                              isNurse ? 'Service' : 'Items',
+                              serviceTitle,
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+
                           _dialogRow('Address', cleanAddress),
                           const SizedBox(height: 8),
                           _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),

@@ -1,4 +1,7 @@
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -1077,7 +1080,7 @@ String _cleanFormattedAddress(String raw) {
 }
 
 // ─────────────────────────────────────────────
-// Payment Success Dialog (Pure English + Share Receipt)
+// Payment Success Dialog (Image Receipt Capture + Pure Text Share)
 // ─────────────────────────────────────────────
 void _showPaymentSuccessDialog({
   required BuildContext context,
@@ -1091,6 +1094,56 @@ void _showPaymentSuccessDialog({
 }) {
   final cleanAddress = _cleanFormattedAddress(address);
   final cleanOrderId = orderId.startsWith('#') ? orderId : '#$orderId';
+  final nowStr = DateFormat('MMMM d, yyyy, h:mm a').format(DateTime.now());
+  final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
+
+  final GlobalKey receiptRepaintKey = GlobalKey();
+
+  Future<void> captureAndShareReceipt() async {
+    final receiptTextSummary = StringBuffer()
+      ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
+      ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+      ..writeln('✅ *Status:* PAID')
+      ..writeln('🧾 *Receipt ID:* $cleanOrderId')
+      ..writeln('📅 *Date:* $nowStr')
+      ..writeln('🩺 *Service:* $serviceTitle')
+      ..writeln('📍 *Address:* $cleanAddress')
+      ..writeln('💳 *Payment Method:* $paymentMethod')
+      ..writeln('💵 *Total Paid:* \$${totalAmount.toStringAsFixed(2)}')
+      ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+      ..writeln('Thank you for your purchase!');
+
+    try {
+      final boundary = receiptRepaintKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary != null) {
+        final ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+        final ByteData? byteData =
+            await image.toByteData(format: ui.ImageByteFormat.png);
+        if (byteData != null) {
+          final pngBytes = byteData.buffer.asUint8List();
+          final tempDir = Directory.systemTemp;
+          final safeId = cleanOrderId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+          final file = File('${tempDir.path}/Receipt_$safeId.png');
+          await file.writeAsBytes(pngBytes);
+
+          await Share.shareXFiles(
+            [XFile(file.path)],
+            text: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('[RECEIPT_SHARE_ERROR] $e');
+    }
+
+    // Fallback if image generation is unavailable
+    await Share.share(
+      receiptTextSummary.toString(),
+      subject: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
+    );
+  }
 
   showDialog(
     context: context,
@@ -1102,246 +1155,169 @@ void _showPaymentSuccessDialog({
         insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.all(20.0),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Top Bar with Close button and quick Share Icon
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () async {
-                        final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
-                        final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
+                // Top Close button only
+                Align(
+                  alignment: Alignment.topRight,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Color(0xFF64748B),
+                      size: 24,
+                    ),
+                    onPressed: () {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MainPatientLayout(),
+                        ),
+                        (route) => false,
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 6),
 
-                        final receiptText = StringBuffer()
-                          ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
-                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                          ..writeln('✅ *Status:* PAID')
-                          ..writeln('🧾 *Receipt No:* $cleanOrderId')
-                          ..writeln('📅 *Date:* $nowStr')
-                          ..writeln('🩺 *Service:* $serviceTitle')
-                          ..writeln('📍 *Address:* $cleanAddress')
-                          ..writeln('💳 *Payment Method:* $paymentMethod')
-                          ..writeln('💵 *TOTAL PAID:* \$${totalAmount.toStringAsFixed(2)}')
-                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                          ..writeln('Thank you for choosing Nasiib Hospital!');
-
-                        await Share.share(
-                          receiptText.toString(),
-                          subject: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
-                        );
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: const Color(0xFF00A86B),
-                            width: 1.5,
+                // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style)
+                RepaintBoundary(
+                  key: receiptRepaintKey,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 24,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.03),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Green Checkmark Icon Badge
+                        Container(
+                          width: 52,
+                          height: 52,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFD1FADF),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Center(
+                            child: Icon(
+                              Icons.check_rounded,
+                              color: Color(0xFF12B76A),
+                              size: 32,
+                            ),
                           ),
                         ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
+                        const SizedBox(height: 12),
+                        Text(
+                          'Payment Successful',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Nasiib Hospital',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF0D7C66),
+                          ),
+                        ),
+                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                        // Date & Receipt ID
+                        _dialogRow('Date', nowStr),
+                        const SizedBox(height: 8),
+                        _dialogRow('Receipt ID', cleanOrderId),
+                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                        // Service & Items Details
+                        _dialogRow(
+                          isNurse ? 'Service' : 'Items',
+                          serviceTitle,
+                        ),
+                        const SizedBox(height: 8),
+                        _dialogRow('Address', cleanAddress),
+                        const SizedBox(height: 8),
+                        _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),
+                        const SizedBox(height: 8),
+                        _dialogRow('Delivery Fee', 'Free'),
+                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
+
+                        // Payment Method & Total
+                        _dialogRow('Payment Method', paymentMethod),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Icon(
-                              Icons.ios_share_rounded,
-                              color: Color(0xFF00A86B),
-                              size: 16,
-                            ),
-                            SizedBox(width: 6),
                             Text(
-                              'Share Receipt',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF00A86B),
+                              'Total Paid',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF0F172A),
+                              ),
+                            ),
+                            Text(
+                              '\$${totalAmount.toStringAsFixed(2)}',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF0D7C66),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close_rounded,
-                        color: Color(0xFF1E562A),
-                      ),
-                      onPressed: () {
-                        Navigator.pushAndRemoveUntil(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const MainPatientLayout(),
-                          ),
-                          (route) => false,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFE8F5E9),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF2E7D32),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
-                        size: 36,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'PAYMENT SUCCESSFUL!',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: const Color(0xFF1B5E20),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  isNurse
-                      ? 'Thank you for your booking. The nurse will contact you shortly.'
-                      : 'Thank you for your purchase. Your order has been placed and is being prepared.',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: Colors.grey[700],
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 20),
+                        const Divider(height: 24, color: Color(0xFFE2E8F0)),
 
-                // Summary receipt
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFAFAFC),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE0E0E0)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _dialogRow(
-                        isNurse ? 'Booking ID' : 'Order ID',
-                        cleanOrderId,
-                      ),
-                      const SizedBox(height: 6),
-                      _dialogRow(
-                        isNurse ? 'Nurse' : 'Items',
-                        isNurse ? (nurseName ?? 'Home Nurse Care') : '$itemCount Items',
-                      ),
-                      const SizedBox(height: 6),
-                      _dialogRow(
-                        'Address',
-                        cleanAddress,
-                      ),
-                      const SizedBox(height: 6),
-                      _dialogRow('Payment', paymentMethod),
-                      const Divider(height: 16, color: Color(0xFFE0E0E0)),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'TOTAL',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: const Color(0xFF1B5E20),
-                            ),
+                        // Footer note
+                        Text(
+                          'Thank you for your purchase!',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF475569),
                           ),
-                          Text(
-                            '\$${totalAmount.toStringAsFixed(2)}',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: const Color(0xFF1B5E20),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
-                // 📤 Share Receipt Button (Matching exact pill outline design)
-                Container(
-                  width: double.infinity,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
+                // 📤 Share Receipt Button (Clean text link with icon, no container border)
+                TextButton.icon(
+                  onPressed: () => captureAndShareReceipt(),
+                  icon: const Icon(
+                    Icons.ios_share_rounded,
+                    color: Color(0xFF00A86B),
+                    size: 20,
+                  ),
+                  label: Text(
+                    'Share Receipt',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
                       color: const Color(0xFF00A86B),
-                      width: 1.8,
-                    ),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(28),
-                      onTap: () async {
-                        final nowStr = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
-                        final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
-
-                        final receiptText = StringBuffer()
-                          ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
-                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                          ..writeln('✅ *Status:* PAID')
-                          ..writeln('🧾 *Receipt No:* $cleanOrderId')
-                          ..writeln('📅 *Date:* $nowStr')
-                          ..writeln('🩺 *Service:* $serviceTitle')
-                          ..writeln('📍 *Address:* $cleanAddress')
-                          ..writeln('💳 *Payment Method:* $paymentMethod')
-                          ..writeln('💵 *TOTAL PAID:* \$${totalAmount.toStringAsFixed(2)}')
-                          ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                          ..writeln('Thank you for choosing Nasiib Hospital!');
-
-                        await Share.share(
-                          receiptText.toString(),
-                          subject: 'Nasiib Hospital Payment Receipt - $cleanOrderId',
-                        );
-                      },
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.ios_share_rounded,
-                            color: Color(0xFF00A86B),
-                            size: 22,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Share Receipt',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF00A86B),
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                        ],
-                      ),
+                      decoration: TextDecoration.underline,
                     ),
                   ),
                 ),

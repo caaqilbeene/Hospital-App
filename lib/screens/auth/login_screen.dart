@@ -249,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'Akoonkan ma diiwaangashana. Fadlan marka hore is-diiwaangeli (Sign Up)!',
+                            'This account is not registered. Please sign up first.',
                           ),
                           backgroundColor: AppTheme.primaryColor,
                           duration: Duration(seconds: 3),

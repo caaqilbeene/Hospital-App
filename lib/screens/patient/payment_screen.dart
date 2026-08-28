@@ -385,13 +385,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
       appState.addAppointment(confirmedBooking);
 
       if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                AppointmentConfirmedScreen(booking: confirmedBooking),
-          ),
-          (route) => false,
+        _showPaymentSuccessDialog(
+          context: context,
+          orderId: widget.booking.referenceId,
+          itemCount: 1,
+          address: widget.booking.hospitalName,
+          paymentMethod: _methodLabel,
+          totalAmount: widget.booking.amount,
+          isDoctorAppointment: true,
+          doctorName: widget.booking.doctorName,
+          doctorSpecialty: widget.booking.doctorSpecialty,
+          appointmentDate: widget.booking.date,
+          appointmentTime: widget.booking.time,
+          queueNumber: widget.booking.queueNumber,
         );
       }
     }
@@ -1127,24 +1133,40 @@ void _showPaymentSuccessDialog({
   required double totalAmount,
   bool isNurse = false,
   String? nurseName,
+  bool isDoctorAppointment = false,
+  String? doctorName,
+  String? doctorSpecialty,
+  String? appointmentDate,
+  String? appointmentTime,
+  int? queueNumber,
   List<Map<String, dynamic>>? purchasedItems,
 }) {
   final cleanAddress = _cleanFormattedAddress(address);
   final cleanOrderId = orderId.startsWith('#') ? orderId : '#$orderId';
   final nowStr = DateFormat('MMMM d, yyyy, h:mm a').format(DateTime.now());
-  final serviceTitle = isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)';
+  final serviceTitle = isDoctorAppointment
+      ? 'Doctor Consultation: ${doctorName ?? 'Doctor'}'
+      : (isNurse ? (nurseName ?? 'Home Nurse Care') : 'Medicines & Delivery ($itemCount items)');
 
   final GlobalKey receiptRepaintKey = GlobalKey();
 
   Future<void> captureAndShareReceipt() async {
     final receiptTextSummary = StringBuffer()
-      ..writeln('🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
+      ..writeln(isDoctorAppointment
+          ? '🏥 *NASIIB HOSPITAL - APPOINTMENT PAYMENT RECEIPT*'
+          : '🏥 *NASIIB HOSPITAL - OFFICIAL PAYMENT RECEIPT*')
       ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
       ..writeln('✅ *Status:* PAID')
       ..writeln('🧾 *Receipt ID:* $cleanOrderId')
       ..writeln('📅 *Date:* $nowStr');
 
-    if (purchasedItems != null && purchasedItems.isNotEmpty) {
+    if (isDoctorAppointment) {
+      if (doctorName != null) receiptTextSummary.writeln('👨‍⚕️ *Doctor:* $doctorName');
+      if (doctorSpecialty != null) receiptTextSummary.writeln('🩺 *Specialty:* $doctorSpecialty');
+      if (appointmentDate != null) receiptTextSummary.writeln('🗓️ *Appointment Date:* $appointmentDate');
+      if (appointmentTime != null) receiptTextSummary.writeln('⏰ *Time:* $appointmentTime');
+      if (queueNumber != null) receiptTextSummary.writeln('🔢 *Queue Number:* #$queueNumber');
+    } else if (purchasedItems != null && purchasedItems.isNotEmpty) {
       receiptTextSummary.writeln('📋 *Items Purchased:*');
       for (final it in purchasedItems) {
         final qty = (it['quantity'] as num?)?.toInt() ?? 1;
@@ -1156,12 +1178,16 @@ void _showPaymentSuccessDialog({
       receiptTextSummary.writeln('🩺 *Service:* $serviceTitle');
     }
 
+    if (!isDoctorAppointment) {
+      receiptTextSummary.writeln('📍 *Address:* $cleanAddress');
+    }
     receiptTextSummary
-      ..writeln('📍 *Address:* $cleanAddress')
       ..writeln('💳 *Payment Method:* $paymentMethod')
       ..writeln('💵 *Total Paid:* \$${totalAmount.toStringAsFixed(2)}')
       ..writeln('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-      ..writeln('Thank you for your purchase!');
+      ..writeln(isDoctorAppointment
+          ? 'Thank you for booking with Nasiib Hospital!'
+          : 'Thank you for your purchase!');
 
     try {
       final boundary = receiptRepaintKey.currentContext?.findRenderObject()
@@ -1245,7 +1271,7 @@ void _showPaymentSuccessDialog({
                   ),
                   const SizedBox(height: 6),
 
-                  // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style with Itemized Medicines)
+                  // 📄 Capture-Ready Receipt Card (Matching Screenshot 2 Style)
                   RepaintBoundary(
                     key: receiptRepaintKey,
                     child: Container(
@@ -1286,7 +1312,9 @@ void _showPaymentSuccessDialog({
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Payment Successful',
+                            isDoctorAppointment
+                                ? 'Appointment Booked'
+                                : 'Payment Successful',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 20,
                               fontWeight: FontWeight.w800,
@@ -1307,11 +1335,35 @@ void _showPaymentSuccessDialog({
                           // Date & Receipt ID
                           _dialogRow('Date', nowStr),
                           const SizedBox(height: 8),
-                          _dialogRow('Receipt ID', cleanOrderId),
+                          _dialogRow(
+                            isDoctorAppointment ? 'Reference ID' : 'Receipt ID',
+                            cleanOrderId,
+                          ),
                           const Divider(height: 24, color: Color(0xFFE2E8F0)),
 
-                          // 📋 Itemized Medicines / Service Details
-                          if (purchasedItems != null && purchasedItems.isNotEmpty) ...[
+                          // 📋 Doctor Details OR Itemized Medicines OR Service Details
+                          if (isDoctorAppointment) ...[
+                            if (doctorName != null) ...[
+                              _dialogRow('Doctor', doctorName),
+                              const SizedBox(height: 8),
+                            ],
+                            if (doctorSpecialty != null) ...[
+                              _dialogRow('Specialty', doctorSpecialty),
+                              const SizedBox(height: 8),
+                            ],
+                            if (appointmentDate != null) ...[
+                              _dialogRow('Date', appointmentDate),
+                              const SizedBox(height: 8),
+                            ],
+                            if (appointmentTime != null) ...[
+                              _dialogRow('Time', appointmentTime),
+                              const SizedBox(height: 8),
+                            ],
+                            if (queueNumber != null) ...[
+                              _dialogRow('Queue Number', '#$queueNumber'),
+                              const SizedBox(height: 8),
+                            ],
+                          ] else if (purchasedItems != null && purchasedItems.isNotEmpty) ...[
                             for (final it in purchasedItems) ...[
                               Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 3.0),
@@ -1351,12 +1403,14 @@ void _showPaymentSuccessDialog({
                             const SizedBox(height: 8),
                           ],
 
-                          _dialogRow('Address', cleanAddress),
-                          const SizedBox(height: 8),
-                          _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),
-                          const SizedBox(height: 8),
-                          _dialogRow('Delivery Fee', 'Free'),
-                          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+                          if (!isDoctorAppointment) ...[
+                            _dialogRow('Address', cleanAddress),
+                            const SizedBox(height: 8),
+                            _dialogRow('Subtotal', '\$${totalAmount.toStringAsFixed(2)}'),
+                            const SizedBox(height: 8),
+                            _dialogRow('Delivery Fee', 'Free'),
+                            const Divider(height: 24, color: Color(0xFFE2E8F0)),
+                          ],
 
                           // Payment Method & Total
                           _dialogRow('Payment Method', paymentMethod),
@@ -1386,7 +1440,9 @@ void _showPaymentSuccessDialog({
 
                           // Footer note
                           Text(
-                            'Thank you for your purchase!',
+                            isDoctorAppointment
+                                ? 'Thank you for booking with Nasiib Hospital!'
+                                : 'Thank you for your purchase!',
                             textAlign: TextAlign.center,
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 12,
@@ -1452,7 +1508,7 @@ void _showPaymentSuccessDialog({
                       ),
                     ),
                   ),
-                  if (!isNurse) ...[
+                  if (!isNurse && !isDoctorAppointment) ...[
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,

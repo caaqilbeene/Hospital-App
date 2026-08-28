@@ -24,6 +24,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/print_service.dart';
 import '../../services/fcm_sender.dart';
+import '../../services/email_otp_service.dart';
 import '../../widgets/network_or_asset_image.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -208,6 +209,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       TextEditingController();
   final TextEditingController _announcementBodyController =
       TextEditingController();
+  bool _sendBroadcastToEmail = true;
+  bool _isSendingBroadcast = false;
   final TextEditingController _diagnosisController = TextEditingController();
   final TextEditingController _weightController = TextEditingController(
     text: '70 kg',
@@ -1120,9 +1123,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 padding: const EdgeInsets.only(top: 24.0),
                 child: SizedBox(
                   height: 52,
-                  width: 180,
+                  width: 200,
                   child: ElevatedButton(
-                    onPressed: () async {
+                    onPressed: _isSendingBroadcast ? null : () async {
                       final title = _announcementTitleController.text.trim();
                       final body = _announcementBodyController.text.trim();
                       if (title.isEmpty || body.isEmpty) {
@@ -1136,6 +1139,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         return;
                       }
 
+                      setState(() => _isSendingBroadcast = true);
+
                       final String notifId = DateTime.now()
                           .millisecondsSinceEpoch
                           .toString();
@@ -1143,8 +1148,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           .toUtc()
                           .toIso8601String();
 
+                      int emailSentCount = 0;
+
                       try {
                         final client = Supabase.instance.client;
+                        // 1. Insert in notifications for App Push
                         await client.from('notifications').insert({
                           'id': notifId,
                           'title': title,
@@ -1156,15 +1164,48 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         });
 
                         await appState.loadNotificationsFromSupabase();
+
+                        // 2. Dispatch Email Broadcast if enabled
+                        if (_sendBroadcastToEmail) {
+                          try {
+                            final patientsData = await client
+                                .from('patients')
+                                .select('email, full_name')
+                                .not('email', 'is', null);
+
+                            final List<String> emailList = [];
+                            if (patientsData is List) {
+                              for (final p in patientsData) {
+                                final em = (p['email'] as String?)?.trim();
+                                if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
+                                  emailList.add(em);
+                                }
+                              }
+                            }
+
+                            if (emailList.isNotEmpty) {
+                              emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
+                                subject: title,
+                                announcementBody: body,
+                                recipientEmails: emailList,
+                              );
+                            }
+                          } catch (mailErr) {
+                            debugPrint("[ADMIN_BROADCAST] Email dispatch error: $mailErr");
+                          }
+                        }
+
                         _announcementTitleController.clear();
                         _announcementBodyController.clear();
 
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
+                            SnackBar(
                               backgroundColor: Colors.green,
                               content: Text(
-                                'Fariinta si guul leh ayaa loo diray!',
+                                _sendBroadcastToEmail && emailSentCount > 0
+                                    ? 'Fariinta App-ka iyo Email-ada ($emailSentCount bukaan) si guul leh ayaa loo diray!'
+                                    : 'Fariinta App-ka si guul leh ayaa loo diray!',
                               ),
                             ),
                           );
@@ -1179,6 +1220,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             ),
                           );
                         }
+                      } finally {
+                        if (mounted) {
+                          setState(() => _isSendingBroadcast = false);
+                        }
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -1187,22 +1232,56 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                        SizedBox(width: 8),
-                        Text(
-                          'Send Broadcast',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                    child: _isSendingBroadcast
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                              SizedBox(width: 8),
+                              Text(
+                                'Send Broadcast',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
-                    ),
                   ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Checkbox(
+                value: _sendBroadcastToEmail,
+                activeColor: AppTheme.primaryColor,
+                onChanged: (val) {
+                  setState(() {
+                    _sendBroadcastToEmail = val ?? true;
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.email_outlined, size: 16, color: AppTheme.primaryColor),
+              const SizedBox(width: 6),
+              const Text(
+                'Sidoo kale fariintan Email ahaan ugu dir dhammaan bukaannada is-diiwaangeliyay (Send to All Patient Emails)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
                 ),
               ),
             ],

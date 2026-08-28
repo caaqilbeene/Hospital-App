@@ -102,6 +102,75 @@ class EmailOtpService {
       return true;
     }
   }
+
+  Future<int> sendBroadcastEmail({
+    required String subject,
+    required String announcementBody,
+    required List<String> recipientEmails,
+  }) async {
+    if (recipientEmails.isEmpty) return 0;
+    int sentCount = 0;
+
+    final htmlContent = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; }
+    .card { max-width: 550px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 32px 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .header { font-size: 24px; font-weight: 800; color: #0D7C66; margin-bottom: 8px; text-align: center; }
+    .badge { display: inline-block; background: #e6f4ea; color: #0D7C66; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 20px; margin-bottom: 16px; }
+    .title { font-size: 18px; font-weight: 700; color: #0f172a; margin-bottom: 12px; }
+    .message-box { background: #f8fafc; border-left: 4px solid #0D7C66; border-radius: 8px; padding: 18px 20px; margin: 20px 0; color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+    .footer { color: #94a3b8; font-size: 12px; margin-top: 28px; line-height: 1.5; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <div class="header">🏥 Nasiib Hospital</div>
+      <div class="badge">Official Announcement</div>
+    </div>
+    <div class="title">$subject</div>
+    <div class="message-box">$announcementBody</div>
+    <div class="footer">
+      Waxaa fariintan si rasmi ah kuugu soo diray <b>Nasiib Hospital</b>.<br>
+      Mahadsanid inaad dooratay adeegyadayada caafimaad.
+    </div>
+  </div>
+</body>
+</html>
+''';
+
+    try {
+      final smtpServer = gmail(_gmailUser, _gmailPass);
+      final validEmails = recipientEmails
+          .map((e) => e.trim().toLowerCase())
+          .where((e) => e.contains('@') && e.contains('.'))
+          .toSet()
+          .toList();
+
+      for (final target in validEmails) {
+        try {
+          final message = Message()
+            ..from = Address(_gmailUser, 'Nasiib Hospital')
+            ..recipients.add(target)
+            ..subject = '🏥 Nasiib Hospital: $subject'
+            ..html = htmlContent;
+
+          await send(message, smtpServer);
+          sentCount++;
+          debugPrint("[BROADCAST_EMAIL] Sent announcement to $target");
+        } catch (err) {
+          debugPrint("[BROADCAST_EMAIL] Error sending to $target: $err");
+        }
+      }
+    } catch (e) {
+      debugPrint("[BROADCAST_EMAIL] SMTP general error: $e");
+    }
+    return sentCount;
+  }
 }
 
 class _OtpData {

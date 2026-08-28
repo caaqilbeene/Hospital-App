@@ -2178,17 +2178,38 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
+  final Set<String> _deletedAppointmentIds = {};
+
+  Future<void> _loadDeletedAppointmentIdsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('saved_deleted_appointment_ids_v1');
+      if (list != null) {
+        _deletedAppointmentIds.addAll(list);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveDeletedAppointmentIdsToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('saved_deleted_appointment_ids_v1', _deletedAppointmentIds.toList());
+    } catch (_) {}
+  }
+
   Future<void> deleteAppointment(String id) async {
     _appointments.removeWhere((a) => a.id == id || a.referenceId == id);
     _deletedAppointments.removeWhere((a) => a.id == id || a.referenceId == id);
+    _deletedAppointmentIds.add(id);
+    _saveDeletedAppointmentIdsToPrefs();
     notifyListeners();
 
     final client = SupabaseService.instance.client;
     if (client != null && SupabaseService.instance.isInitialized) {
       try {
-        await client.from('appointments').delete().eq('id', id);
-        await client.from('appointments').delete().eq('reference_id', id);
-        final cleanId = id.replaceAll('apt_', '');
+        await client.from('appointments').delete().or('id.eq."$id",reference_id.eq."$id"');
+        await client.from('nurse_orders').delete().or('id.eq."$id",booking_id.eq."$id",service_notes.eq."$id"');
+        final cleanId = id.replaceAll('apt_', '').replaceAll('nurse_', '');
         final parsedInt = int.tryParse(cleanId);
         if (parsedInt != null) {
           await client.from('appointments').delete().eq('id', parsedInt);
@@ -3754,17 +3775,58 @@ class AppState extends ChangeNotifier {
     final client = SupabaseService.instance.client;
     if (client == null || !SupabaseService.instance.isInitialized) return;
 
+    final targetPhone = _currentUser?.phoneNumber ?? FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
+    final String cleanPhone = targetPhone.replaceAll(RegExp(r'\D'), '');
+    String baseDigits = cleanPhone;
+    if (baseDigits.startsWith('252') && baseDigits.length >= 12) {
+      baseDigits = baseDigits.substring(3);
+    }
+    if (baseDigits.startsWith('0') && baseDigits.length >= 10) {
+      baseDigits = baseDigits.substring(1);
+    }
+    
+    final possibleFormats = [
+      targetPhone,
+      cleanPhone,
+      baseDigits,
+      '0$baseDigits',
+      '252$baseDigits',
+      '+252$baseDigits',
+      _currentUser?.id ?? '',
+    ].where((s) => s.isNotEmpty).toSet().toList();
+
     try {
-      // 1. Fetch Doctor Appointments
+      await _loadDeletedAppointmentIdsFromPrefs();
+
+      // 1. Fetch Doctor Appointments exclusively for this patient
       final aptData = await client
           .from('appointments')
           .select()
           .order('created_at', ascending: false);
 
       if (aptData is List) {
+        _appointments.clear();
         for (final row in aptData) {
           try {
             final apt = AppointmentModel.fromJson(Map<String, dynamic>.from(row));
+            // Skip appointments deleted by this user
+            if (_deletedAppointmentIds.contains(apt.id) ||
+                (apt.referenceId.isNotEmpty && _deletedAppointmentIds.contains(apt.referenceId))) {
+              continue;
+            }
+
+            // Filter to only match current logged in patient
+            if (possibleFormats.isNotEmpty) {
+              final String aptPhone = apt.patientPhone.replaceAll(RegExp(r'\D'), '');
+              final bool matchesPhone = possibleFormats.any((f) {
+                final cleanF = f.replaceAll(RegExp(r'\D'), '');
+                return (cleanF.isNotEmpty && aptPhone.contains(cleanF)) || apt.patientPhone.contains(f);
+              });
+              if (!matchesPhone && apt.patientName != _currentUser?.fullName) {
+                continue; // Skip other users' appointments
+              }
+            }
+
             final idx = _appointments.indexWhere((a) =>
                 a.id == apt.id ||
                 (a.referenceId.isNotEmpty && a.referenceId == apt.referenceId));
@@ -3777,7 +3839,7 @@ class AppState extends ChangeNotifier {
         }
       }
 
-      // 2. Fetch Nurse Orders from nurse_orders table
+      // 2. Fetch Nurse Orders for this patient
       try {
         final nurseData = await client
             .from('nurse_orders')
@@ -3788,11 +3850,24 @@ class AppState extends ChangeNotifier {
           _dbNurseOrders = List<Map<String, dynamic>>.from(nurseData);
           for (final nRow in _dbNurseOrders) {
             final nId = (nRow['id'] ?? nRow['booking_id'] ?? '').toString();
-            final nStatus = (nRow['status'] ?? nRow['order_status'] ?? 'pending').toString();
             final refId = (nRow['service_notes'] ?? nRow['reference_id'] ?? nRow['booking_id'] ?? '#NURSE-ORDER').toString();
+            if (_deletedAppointmentIds.contains(nId) || _deletedAppointmentIds.contains(refId)) {
+              continue; // Skip deleted nurse orders
+            }
+
+            final phone = (nRow['phone'] ?? nRow['patient_phone'] ?? '').toString();
+            if (possibleFormats.isNotEmpty) {
+              final String cleanNPhone = phone.replaceAll(RegExp(r'\D'), '');
+              final bool matchesNPhone = possibleFormats.any((f) {
+                final cleanF = f.replaceAll(RegExp(r'\D'), '');
+                return (cleanF.isNotEmpty && cleanNPhone.contains(cleanF)) || phone.contains(f);
+              });
+              if (!matchesNPhone) continue;
+            }
+
+            final nStatus = (nRow['status'] ?? nRow['order_status'] ?? 'pending').toString();
             final nurseName = (nRow['nurse_name'] ?? nRow['service_type'] ?? 'Home Care Nurse').toString();
             final patientName = (nRow['customer_name'] ?? nRow['patient_name'] ?? 'Patient').toString();
-            final phone = (nRow['phone'] ?? nRow['patient_phone'] ?? '').toString();
             final fee = (nRow['amount_paid'] ?? nRow['fee'] ?? nRow['total_amount'] ?? 0.0);
             final double amount = (fee is num) ? fee.toDouble() : (double.tryParse(fee.toString()) ?? 0.0);
             final paymentMethod = (nRow['payment_method'] ?? 'EVC Plus').toString();

@@ -220,14 +220,41 @@ class SupabaseService {
         } catch (_) {}
       }
 
-      // 2. Delete from patients
+      // 2. Delete from nurse_bookings & home_care_bookings
+      for (final p in possibleFormats) {
+        try {
+          await client!.from('nurse_bookings').delete().or('patient_phone.eq."$p",patient_id.eq."$p",phone.eq."$p"');
+        } catch (_) {}
+        try {
+          await client!.from('home_care_bookings').delete().or('patient_phone.eq."$p",patient_id.eq."$p",phone.eq."$p"');
+        } catch (_) {}
+      }
+
+      // 3. Delete from orders & medicine_orders
+      for (final p in possibleFormats) {
+        try {
+          await client!.from('orders').delete().or('patient_phone.eq."$p",user_id.eq."$p",phone.eq."$p"');
+        } catch (_) {}
+        try {
+          await client!.from('medicine_orders').delete().or('patient_phone.eq."$p",user_id.eq."$p",phone.eq."$p"');
+        } catch (_) {}
+      }
+
+      // 4. Delete from notifications
+      for (final p in possibleFormats) {
+        try {
+          await client!.from('notifications').delete().or('user_id.eq."$p",phone.eq."$p"');
+        } catch (_) {}
+      }
+
+      // 5. Delete from patients
       for (final p in possibleFormats) {
         try {
           await client!.from('patients').delete().or('phone.eq."$p",phone_number.eq."$p",id.eq."$p"');
         } catch (_) {}
       }
 
-      // 3. Delete from users
+      // 6. Delete from users
       for (final p in possibleFormats) {
         try {
           await client!.from('users').delete().or('phone_number.eq."$p",phone.eq."$p",id.eq."$p"');

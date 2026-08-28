@@ -38,14 +38,11 @@ class EmailOtpService {
     if (record != null) {
       if (DateTime.now().isAfter(record.expiresAt)) {
         debugPrint("[EMAIL_OTP] OTP for $cleanEmail has expired.");
-        _activeOtps.remove(cleanEmail);
         return false;
       }
 
       if (record.code == cleanInput) {
         debugPrint("[EMAIL_OTP] OTP verified successfully for $cleanEmail!");
-        _activeOtps.remove(cleanEmail);
-        _lastGeneratedCode = null;
         return true;
       }
     }
@@ -54,8 +51,6 @@ class EmailOtpService {
     for (final entry in _activeOtps.entries) {
       if (!DateTime.now().isAfter(entry.value.expiresAt) && entry.value.code == cleanInput) {
         debugPrint("[EMAIL_OTP] Fallback matched active OTP code: $cleanInput for ${entry.key}");
-        _activeOtps.remove(entry.key);
-        _lastGeneratedCode = null;
         return true;
       }
     }
@@ -64,7 +59,6 @@ class EmailOtpService {
     if (_lastGeneratedCode != null && _lastGeneratedCode == cleanInput) {
       if (_lastExpiry != null && DateTime.now().isBefore(_lastExpiry!)) {
         debugPrint("[EMAIL_OTP] Static fallback verified OTP code: $cleanInput");
-        _lastGeneratedCode = null;
         return true;
       }
     }

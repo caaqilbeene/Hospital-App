@@ -138,8 +138,6 @@ class _OtpScreenState extends State<OtpScreen> {
       authUserId = FirebaseAuth.instance.currentUser?.uid;
     }
 
-    setState(() => _isVerifying = false);
-
     if (success) {
       if (!mounted) return;
       
@@ -229,6 +227,7 @@ class _OtpScreenState extends State<OtpScreen> {
       );
     } else {
       if (!mounted) return;
+      setState(() => _isVerifying = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Invalid or expired OTP code! Please check and try again.'),

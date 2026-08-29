@@ -3316,6 +3316,18 @@ class AppState extends ChangeNotifier {
 
       await fetchAppointmentsAndNurseOrders();
       notifyListeners();
+
+      // Send instant push notification to patient
+      try {
+        FcmSender().sendTopicNotification(
+          topic: 'nasiib_orders',
+          title: 'Nasiib Home Care',
+          body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
+        );
+      } catch (fcmErr) {
+        debugPrint('[NURSE_ORDERS] FCM notification error: $fcmErr');
+      }
+
       return bookingId;
     } catch (e) {
       debugPrint('[NURSE_ORDERS] placeNurseOrder error: $e');

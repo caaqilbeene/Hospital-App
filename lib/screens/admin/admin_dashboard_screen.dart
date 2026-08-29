@@ -3844,7 +3844,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     FcmSender().sendTopicNotification(
                                       topic: 'nasiib_orders',
                                       title: 'Nasiib Home Care Update',
-                                      body: 'Status-ka dalabkaaga Kalkaalisada waa la cusbooneysiiyay!',
+                                      body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
                                     );
                                   } catch (e) {
                                     debugPrint('Error updating nurse order status: $e');

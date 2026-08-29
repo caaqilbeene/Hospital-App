@@ -84,6 +84,32 @@ class PushNotificationService {
     }
   }
 
+  Future<void> showLocalNotification({
+    required String title,
+    required String body,
+  }) async {
+    if (kIsWeb) return;
+    try {
+      await _localNotifications.show(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'high_importance_channel',
+            'High Importance Notifications',
+            channelDescription: 'This channel is used for urgent order status updates.',
+            icon: '@mipmap/ic_launcher',
+            importance: Importance.max,
+            priority: Priority.high,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Local notification error: $e');
+    }
+  }
+
   Future<String?> getDeviceToken() async {
     try {
       return await _messaging.getToken();

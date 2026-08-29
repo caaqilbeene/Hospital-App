@@ -20,6 +20,7 @@ import '../models/banner_model.dart';
 import 'supabase_service.dart';
 import 'encryption_service.dart';
 import 'fcm_sender.dart';
+import 'push_notification_service.dart';
 
 class AppState extends ChangeNotifier {
   AppState() {
@@ -3334,15 +3335,14 @@ class AppState extends ChangeNotifier {
       await fetchAppointmentsAndNurseOrders();
       notifyListeners();
 
-      // Send instant push notification to patient
+      // Send instant push notification ONLY to this patient's own device
       try {
-        FcmSender().sendTopicNotification(
-          topic: 'nasiib_orders',
+        PushNotificationService.instance.showLocalNotification(
           title: 'Nasiib Home Care',
           body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
         );
-      } catch (fcmErr) {
-        debugPrint('[NURSE_ORDERS] FCM notification error: $fcmErr');
+      } catch (notifErr) {
+        debugPrint('[NURSE_ORDERS] Notification error: $notifErr');
       }
 
       return bookingId;

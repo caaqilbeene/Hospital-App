@@ -2770,6 +2770,38 @@ class AppState extends ChangeNotifier {
   final List<Map<String, dynamic>> _nurseOrders = [];
   List<Map<String, dynamic>> get nurseOrders => _nurseOrders;
 
+  /// Check if a nurse is currently busy (On Duty / In Progress / Pending)
+  bool isNurseBusy(NurseModel nurse) {
+    // 1. Check if nurse record explicitly has isAvailable false
+    if (!nurse.isAvailable) return true;
+
+    // 2. Check if nurse currently has an active order (pending or in progress)
+    final cleanName = nurse.name.trim().toLowerCase();
+    final cleanId = nurse.id.trim().toLowerCase();
+
+    return _nurseOrders.any((order) {
+      final status = (order['status'] ?? order['order_status'] ?? 'pending')
+          .toString()
+          .toLowerCase()
+          .trim();
+      final isActive = status == 'pending' ||
+          status == 'in progress' ||
+          status == 'in_progress' ||
+          status == 'accepted' ||
+          status == 'assigned' ||
+          status == 'on the way';
+
+      if (!isActive) return false;
+
+      final nId = (order['nurse_id'] ?? '').toString().toLowerCase().trim();
+      final nName = (order['nurse_name'] ?? order['doctor_name'] ?? '').toString().toLowerCase().trim();
+
+      return (cleanId.isNotEmpty && nId == cleanId) ||
+          (cleanName.isNotEmpty && nName.contains(cleanName)) ||
+          (cleanName.isNotEmpty && cleanName.contains(nName));
+    });
+  }
+
   final List<Map<String, dynamic>> _payments = [];
   List<Map<String, dynamic>> get payments => _payments;
 

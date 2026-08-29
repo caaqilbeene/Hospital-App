@@ -133,6 +133,9 @@ class _NurseListScreenState extends State<NurseListScreen> {
   }
 
   Widget _buildNurseCard(BuildContext context, NurseModel nurse, AppState appState) {
+    final bool isBusy = appState.isNurseBusy(nurse);
+    final bool isAvailable = !isBusy;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -184,17 +187,17 @@ class _NurseListScreenState extends State<NurseListScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: nurse.isAvailable
+                        color: isAvailable
                             ? const Color(0xFFDCFCE7)
                             : const Color(0xFFFEE2E2),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        nurse.isAvailable ? '🟢 Diyaar' : '🔴 Mashquul',
+                        isAvailable ? '🟢 Diyaar' : '🔴 Mashquul',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: nurse.isAvailable
+                          color: isAvailable
                               ? const Color(0xFF16A34A)
                               : const Color(0xFFDC2626),
                         ),
@@ -252,7 +255,7 @@ class _NurseListScreenState extends State<NurseListScreen> {
 
           // Dalbo / Mashquul Button
           ElevatedButton(
-            onPressed: nurse.isAvailable
+            onPressed: isAvailable
                 ? () {
                     final double nursePrice = (nurse.discountFee != null && nurse.discountFee! > 0)
                         ? nurse.discountFee!
@@ -300,7 +303,7 @@ class _NurseListScreenState extends State<NurseListScreen> {
                     );
                   },
             style: ElevatedButton.styleFrom(
-              backgroundColor: nurse.isAvailable
+              backgroundColor: isAvailable
                   ? AppTheme.primaryColor
                   : const Color(0xFFE2E8F0),
               elevation: 0,
@@ -313,11 +316,11 @@ class _NurseListScreenState extends State<NurseListScreen> {
               ),
             ),
             child: Text(
-              nurse.isAvailable ? 'Dalbo' : 'Mashquul',
+              isAvailable ? 'Dalbo' : 'Mashquul',
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: nurse.isAvailable
+                color: isAvailable
                     ? Colors.white
                     : const Color(0xFF64748B),
               ),

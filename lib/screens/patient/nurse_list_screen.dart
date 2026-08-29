@@ -163,15 +163,44 @@ class _NurseListScreenState extends State<NurseListScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  nurse.name,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        nurse.name,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: nurse.isAvailable
+                            ? const Color(0xFFDCFCE7)
+                            : const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        nurse.isAvailable ? '🟢 Diyaar' : '🔴 Mashquul',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: nurse.isAvailable
+                              ? const Color(0xFF16A34A)
+                              : const Color(0xFFDC2626),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -221,60 +250,76 @@ class _NurseListScreenState extends State<NurseListScreen> {
 
           const SizedBox(width: 10),
 
-          // Dalbo Button
+          // Dalbo / Mashquul Button
           ElevatedButton(
-            onPressed: () {
-              final double nursePrice = (nurse.discountFee != null && nurse.discountFee! > 0)
-                  ? nurse.discountFee!
-                  : nurse.visitFee;
+            onPressed: nurse.isAvailable
+                ? () {
+                    final double nursePrice = (nurse.discountFee != null && nurse.discountFee! > 0)
+                        ? nurse.discountFee!
+                        : nurse.visitFee;
 
-              final customOrder = AppointmentModel(
-                id: 'nurse_${DateTime.now().millisecondsSinceEpoch}',
-                referenceId: '#NRS${10000 + DateTime.now().millisecond}',
-                doctorId: nurse.id,
-                doctorName: nurse.name,
-                doctorSpecialty: 'Kalkaaliso (Home Care)',
-                doctorImageUrl: nurse.imageUrl,
-                hospitalName: 'Nasiib Hospital - Home Care',
-                date: 'Today',
-                time: 'As Soon As Possible',
-                appointmentType: 'Home Nursing Care',
-                patientName: appState.currentUser?.fullName ?? 'Patient',
-                patientPhone: appState.currentUser?.phoneNumber ?? '+252 61 1234567',
-                patientAge: 24,
-                patientGender: 'Male',
-                reasonForVisit: 'Nurse Request: ${nurse.name}',
-                paymentMethod: 'EVC Plus',
-                amount: nursePrice,
-                queueNumber: 1,
-                status: 'Confirmed',
-                createdAt: DateTime.now().toIso8601String(),
-              );
+                    final customOrder = AppointmentModel(
+                      id: 'nurse_${DateTime.now().millisecondsSinceEpoch}',
+                      referenceId: '#NRS${10000 + DateTime.now().millisecond}',
+                      doctorId: nurse.id,
+                      doctorName: nurse.name,
+                      doctorSpecialty: 'Kalkaaliso (Home Care)',
+                      doctorImageUrl: nurse.imageUrl,
+                      hospitalName: 'Nasiib Hospital - Home Care',
+                      date: 'Today',
+                      time: 'As Soon As Possible',
+                      appointmentType: 'Home Nursing Care',
+                      patientName: appState.currentUser?.fullName ?? 'Patient',
+                      patientPhone: appState.currentUser?.phoneNumber ?? '+252 61 1234567',
+                      patientAge: 24,
+                      patientGender: 'Male',
+                      reasonForVisit: 'Nurse Request: ${nurse.name}',
+                      paymentMethod: 'EVC Plus',
+                      amount: nursePrice,
+                      queueNumber: 1,
+                      status: 'Confirmed',
+                      createdAt: DateTime.now().toIso8601String(),
+                    );
 
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => DeliveryDetailsScreen(customOrder: customOrder),
-                ),
-              );
-            },
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DeliveryDetailsScreen(customOrder: customOrder),
+                      ),
+                    );
+                  }
+                : () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Kalkaalisada ${nurse.name} hadda waxay ku jirtaa shaqo kale (Mashquul). Fadlan dooro kalkaaliso kale oo diyaar ah.',
+                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
+                        ),
+                        backgroundColor: const Color(0xFFD97706),
+                      ),
+                    );
+                  },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
+              backgroundColor: nurse.isAvailable
+                  ? AppTheme.primaryColor
+                  : const Color(0xFFE2E8F0),
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
               padding: const EdgeInsets.symmetric(
-                horizontal: 20,
+                horizontal: 18,
                 vertical: 10,
               ),
             ),
             child: Text(
-              'Dalbo',
+              nurse.isAvailable ? 'Dalbo' : 'Mashquul',
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: Colors.white,
+                color: nurse.isAvailable
+                    ? Colors.white
+                    : const Color(0xFF64748B),
               ),
             ),
           ),

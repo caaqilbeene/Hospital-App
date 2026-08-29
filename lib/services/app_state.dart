@@ -3314,6 +3314,23 @@ class AppState extends ChangeNotifier {
         debugPrint('[NURSE_ORDERS] Secondary write to orders table note: $err');
       }
 
+      // Automatically set the booked Nurse to Busy (Auto-Lock)
+      try {
+        if (cleanNurseId != null) {
+          await client.from('nurses').update({
+            'is_available': false,
+            'status': 'busy',
+          }).eq('id', cleanNurseId);
+        } else {
+          await client.from('nurses').update({
+            'is_available': false,
+            'status': 'busy',
+          }).eq('name', nurseName);
+        }
+      } catch (nurseBusyErr) {
+        debugPrint('[NURSE_ORDERS] Setting nurse busy error: $nurseBusyErr');
+      }
+
       await fetchAppointmentsAndNurseOrders();
       notifyListeners();
 
@@ -3332,6 +3349,34 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       debugPrint('[NURSE_ORDERS] placeNurseOrder error: $e');
       return null;
+    }
+  }
+
+  /// Toggle or update Nurse availability (Available vs Busy)
+  Future<bool> setNurseAvailability(String nurseIdOrName, bool isAvailable) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseService.instance.isInitialized) return false;
+
+    try {
+      final isUuid = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(nurseIdOrName);
+      if (isUuid) {
+        await client.from('nurses').update({
+          'is_available': isAvailable,
+          'status': isAvailable ? 'available' : 'busy',
+        }).eq('id', nurseIdOrName);
+      } else {
+        await client.from('nurses').update({
+          'is_available': isAvailable,
+          'status': isAvailable ? 'available' : 'busy',
+        }).eq('name', nurseIdOrName);
+      }
+
+      await fetchAppointmentsAndNurseOrders();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[NURSE_AVAILABILITY] Error: $e');
+      return false;
     }
   }
 

@@ -3643,6 +3643,42 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ],
                     ),
                   ),
+                  InkWell(
+                    onTap: () {
+                      appState.setNurseAvailability(nurse.id, !nurse.isAvailable);
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: nurse.isAvailable ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: nurse.isAvailable ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            nurse.isAvailable ? '🟢 Available' : '🔴 Busy',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: nurse.isAvailable ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            nurse.isAvailable ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
+                            color: nurse.isAvailable ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                            size: 20,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
                   IconButton(
                     icon: const Icon(
                       Icons.edit_rounded,
@@ -3839,6 +3875,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                         .from('nurse_orders')
                                         .update({'status': newStatus})
                                         .eq('id', orderId);
+
+                                    // If completed or cancelled, automatically free up the nurse back to available
+                                    if (newStatus == 'Completed' || newStatus == 'Cancelled') {
+                                      final assignedNurseId = (o['nurse_id'] ?? '').toString();
+                                      final assignedNurseName = (o['nurse_name'] ?? '').toString();
+                                      if (assignedNurseId.isNotEmpty) {
+                                        await SupabaseService.instance.client!
+                                            .from('nurses')
+                                            .update({'is_available': true, 'status': 'available'})
+                                            .eq('id', assignedNurseId);
+                                      } else if (assignedNurseName.isNotEmpty) {
+                                        await SupabaseService.instance.client!
+                                            .from('nurses')
+                                            .update({'is_available': true, 'status': 'available'})
+                                            .eq('name', assignedNurseName);
+                                      }
+                                    }
 
                                     // Trigger FCM push notification to user device
                                     FcmSender().sendTopicNotification(

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1600,7 +1601,35 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
+  int getNextQueueNumberForDoctor({required String doctorId, required String date}) {
+    // Normalize date and doctorId for accurate daily matching
+    final cleanDate = date.trim().toLowerCase();
+    final cleanDoc = doctorId.trim().toLowerCase();
+
+    final matches = _appointments.where((a) {
+      final matchDoc = a.doctorId.trim().toLowerCase() == cleanDoc ||
+          a.doctorName.trim().toLowerCase() == cleanDoc;
+      final matchDate = a.date.trim().toLowerCase() == cleanDate;
+      return matchDoc && matchDate;
+    }).toList();
+
+    if (matches.isEmpty) {
+      return 1;
+    }
+
+    int maxQueue = 0;
+    for (final a in matches) {
+      if (a.queueNumber > maxQueue) {
+        maxQueue = a.queueNumber;
+      }
+    }
+    return maxQueue + 1;
+  }
+
   void startDraftBooking(DoctorModel doctor) {
+    final todayStr = DateFormat('EEEE, MMM d, yyyy').format(DateTime.now());
+    final initialQueue = getNextQueueNumberForDoctor(doctorId: doctor.id, date: todayStr);
+
     currentDraftBooking = AppointmentModel(
       id: 'apt_${DateTime.now().millisecondsSinceEpoch}',
       referenceId: '#APT${(10000 + DateTime.now().millisecond * 7).toString()}',
@@ -1609,7 +1638,7 @@ class AppState extends ChangeNotifier {
       doctorSpecialty: doctor.specialty,
       doctorImageUrl: doctor.imageUrl,
       hospitalName: doctor.hospital,
-      date: 'Monday, Aug 10, 2026',
+      date: todayStr,
       time: '09:00 AM',
       appointmentType: 'New Patient',
       patientName: _currentUser?.fullName ?? '',
@@ -1622,7 +1651,7 @@ class AppState extends ChangeNotifier {
       reasonForVisit: '',
       paymentMethod: 'EVC Plus',
       amount: doctor.activePrice,
-      queueNumber: Random().nextInt(40) + 1,
+      queueNumber: initialQueue,
       status: 'Upcoming',
       createdAt: DateTime.now().toIso8601String(),
     );
@@ -1640,6 +1669,7 @@ class AppState extends ChangeNotifier {
     int? patientAge,
     String? patientGender,
     String? patientImageUrl,
+    int? queueNumber,
   }) {
     if (currentDraftBooking == null) return;
     final String effectiveImg = (patientImageUrl != null && patientImageUrl.trim().isNotEmpty)
@@ -1650,6 +1680,13 @@ class AppState extends ChangeNotifier {
                 ? _currentUser!.avatarUrl.trim()
                 : ''));
 
+    final effectiveDate = date ?? currentDraftBooking!.date;
+    final effectiveQueue = queueNumber ??
+        getNextQueueNumberForDoctor(
+          doctorId: currentDraftBooking!.doctorId,
+          date: effectiveDate,
+        );
+
     currentDraftBooking = AppointmentModel(
       id: currentDraftBooking!.id,
       referenceId: currentDraftBooking!.referenceId,
@@ -1658,7 +1695,7 @@ class AppState extends ChangeNotifier {
       doctorSpecialty: currentDraftBooking!.doctorSpecialty,
       doctorImageUrl: currentDraftBooking!.doctorImageUrl,
       hospitalName: currentDraftBooking!.hospitalName,
-      date: date ?? currentDraftBooking!.date,
+      date: effectiveDate,
       time: time ?? currentDraftBooking!.time,
       appointmentType: appointmentType ?? currentDraftBooking!.appointmentType,
       patientName: (patientName != null && patientName.trim().isNotEmpty)
@@ -1673,7 +1710,7 @@ class AppState extends ChangeNotifier {
       reasonForVisit: reasonForVisit ?? currentDraftBooking!.reasonForVisit,
       paymentMethod: paymentMethod ?? currentDraftBooking!.paymentMethod,
       amount: currentDraftBooking!.amount,
-      queueNumber: currentDraftBooking!.queueNumber,
+      queueNumber: effectiveQueue,
       status: currentDraftBooking!.status,
       createdAt: currentDraftBooking!.createdAt,
     );
@@ -1682,7 +1719,13 @@ class AppState extends ChangeNotifier {
 
   void confirmCurrentBooking() {
     if (currentDraftBooking != null) {
-      _appointments.insert(0, currentDraftBooking!);
+      final latestQueue = getNextQueueNumberForDoctor(
+        doctorId: currentDraftBooking!.doctorId,
+        date: currentDraftBooking!.date,
+      );
+
+      final finalBooking = currentDraftBooking!.copyWith(queueNumber: latestQueue);
+      _appointments.insert(0, finalBooking);
       notifyListeners();
 
       // Insert to Supabase
@@ -1691,22 +1734,22 @@ class AppState extends ChangeNotifier {
         client
             .from('appointments')
             .insert({
-              'id': currentDraftBooking!.id,
-              'reference_id': currentDraftBooking!.referenceId,
-              'doctor_id': currentDraftBooking!.doctorId,
-              'doctor_name': currentDraftBooking!.doctorName,
-              'doctor_specialty': currentDraftBooking!.doctorSpecialty,
-              'patient_name': currentDraftBooking!.patientName,
-              'patient_phone': currentDraftBooking!.patientPhone,
-              'patient_age': currentDraftBooking!.patientAge,
-              'patient_gender': currentDraftBooking!.patientGender,
-              'date': currentDraftBooking!.date,
-              'time': currentDraftBooking!.time,
+              'id': finalBooking.id,
+              'reference_id': finalBooking.referenceId,
+              'doctor_id': finalBooking.doctorId,
+              'doctor_name': finalBooking.doctorName,
+              'doctor_specialty': finalBooking.doctorSpecialty,
+              'patient_name': finalBooking.patientName,
+              'patient_phone': finalBooking.patientPhone,
+              'patient_age': finalBooking.patientAge,
+              'patient_gender': finalBooking.patientGender,
+              'date': finalBooking.date,
+              'time': finalBooking.time,
               'status': 'Confirmed',
-              'reason': currentDraftBooking!.reasonForVisit,
-              'payment_method': currentDraftBooking!.paymentMethod,
-              'amount': currentDraftBooking!.amount,
-              'queue_number': currentDraftBooking!.queueNumber,
+              'reason': finalBooking.reasonForVisit,
+              'payment_method': finalBooking.paymentMethod,
+              'amount': finalBooking.amount,
+              'queue_number': finalBooking.queueNumber,
             })
             .then((_) => debugPrint("Booking saved to Supabase"))
             .catchError(

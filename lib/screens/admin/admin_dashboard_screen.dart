@@ -3893,12 +3893,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                       }
                                     }
 
-                                    // Trigger FCM push notification to user device
-                                    FcmSender().sendTopicNotification(
-                                      topic: 'nasiib_orders',
-                                      title: 'Nasiib Home Care Update',
-                                      body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
-                                    );
+                                    // Trigger FCM push notification to specific customer device
+                                     final custPhone = (o['phone'] ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '');
+                                     final custId = (o['patient_id'] ?? o['customer_id'] ?? '').toString();
+                                     final custTopic = custId.isNotEmpty ? 'user_$custId' : (custPhone.isNotEmpty ? 'user_$custPhone' : null);
+
+                                     if (custTopic != null) {
+                                       FcmSender().sendTopicNotification(
+                                         topic: custTopic,
+                                         title: 'Nasiib Home Care Update',
+                                         body: 'Status-ka dalabkaaga kalkaaliso wuxuu noqday: $newStatus',
+                                       );
+                                     }
                                   } catch (e) {
                                     debugPrint('Error updating nurse order status: $e');
                                   }
@@ -9700,11 +9706,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             .update({'status': 'Out for Delivery'})
                             .eq('id', orderId);
 
-                        FcmSender().sendTopicNotification(
-                          topic: 'nasiib_orders',
-                          title: 'Nasiib Pharmacy Delivery',
-                          body: 'Dalabkaaga dawooyinka wuxuu ku jiraa jidka!',
-                        );
+                        final custPhone = (order['phone'] ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '');
+                        final custId = (order['patient_id'] ?? order['user_id'] ?? '').toString();
+                        final custTopic = custId.isNotEmpty ? 'user_$custId' : (custPhone.isNotEmpty ? 'user_$custPhone' : null);
+
+                        if (custTopic != null) {
+                          FcmSender().sendTopicNotification(
+                            topic: custTopic,
+                            title: 'Nasiib Pharmacy Delivery',
+                            body: 'Dalabkaaga dawooyinka wuxuu ku jiraa jidka!',
+                          );
+                        }
                       }
 
                       // 3. Immediately update UI & trigger full reload

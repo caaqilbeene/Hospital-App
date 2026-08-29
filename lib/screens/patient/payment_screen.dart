@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../config/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/app_state.dart';
+import '../../services/push_notification_service.dart';
 import '../../utils/somali_phone_formatter.dart';
 import 'appointment_confirmed_screen.dart';
 import 'main_patient_layout.dart';
@@ -337,6 +338,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (mounted) {
           // ✅ Await clearCart() so ALL storage keys are wiped before dialog
           await context.read<AppState>().clearCart();
+
+          // Show local notification strictly on this patient's device
+          PushNotificationService.instance.showLocalNotification(
+            title: 'Nasiib Pharmacy',
+            body: 'Waan helnay dalabkaaga dawooyinka, dhakhso ayaan kuugu soo diyaarinaynaa.',
+          );
+
           _showPaymentSuccessDialog(
             context: context,
             orderId: orderId ?? widget.booking.referenceId,
@@ -385,6 +393,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
       appState.addAppointment(confirmedBooking);
 
       if (mounted) {
+        // Show local notification strictly on this patient's device
+        PushNotificationService.instance.showLocalNotification(
+          title: 'Nasiib Hospital',
+          body: 'Ballantaadii Dhaqtarka waa la xaqiijiyay! Lambarka safkaaga waa #${widget.booking.queueNumber}.',
+        );
+
         _showPaymentSuccessDialog(
           context: context,
           orderId: widget.booking.referenceId,

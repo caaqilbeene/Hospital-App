@@ -152,6 +152,15 @@ class AppState extends ChangeNotifier {
           _currentUser != null) {
         _currentUser = _currentUser!.copyWith(avatarUrl: savedAvatar);
       }
+
+      // Auto-subscribe this device to user's private notification topics
+      if (_currentUser != null) {
+        PushNotificationService.instance.subscribeToUserTopic(_currentUser!.id);
+        if (_currentUser!.phoneNumber.isNotEmpty) {
+          PushNotificationService.instance.subscribeToUserTopic(_currentUser!.phoneNumber);
+        }
+      }
+
       notifyListeners();
     } catch (e) {
       debugPrint("Error loading profile from SharedPreferences: $e");
@@ -3428,11 +3437,23 @@ class AppState extends ChangeNotifier {
         notificationBody = 'Dalabkaaga dawooyinka waa la kansalay.';
       }
 
-      FcmSender().sendTopicNotification(
-        topic: 'nasiib_orders',
-        title: notificationTitle,
-        body: notificationBody,
-      );
+      // Trigger FCM Push Notification strictly to THIS specific customer's private channel
+      try {
+        final orderData = _orders.firstWhere((o) => o['id'].toString() == orderId, orElse: () => {});
+        final pPhone = (orderData['phone'] ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '');
+        final pId = (orderData['patient_id'] ?? orderData['user_id'] ?? '').toString();
+        final targetTopic = pId.isNotEmpty ? 'user_$pId' : (pPhone.isNotEmpty ? 'user_$pPhone' : null);
+
+        if (targetTopic != null) {
+          FcmSender().sendTopicNotification(
+            topic: targetTopic,
+            title: notificationTitle,
+            body: notificationBody,
+          );
+        }
+      } catch (fcmErr) {
+        debugPrint('[ORDER_NOTIFICATION] Error routing notification: $fcmErr');
+      }
 
       return true;
     } catch (e) {

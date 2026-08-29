@@ -77,13 +77,28 @@ class PushNotificationService {
         }
       });
 
-      // Subscribe to general orders topic
-      await _messaging.subscribeToTopic('nasiib_orders');
+      // Initialize local notification display
+      debugPrint('PushNotificationService initialized successfully.');
     } catch (e) {
       debugPrint('PushNotificationService initialization error: $e');
     }
   }
 
+  /// Subscribe user to their own private notification channel
+  Future<void> subscribeToUserTopic(String identifier) async {
+    if (kIsWeb) return;
+    try {
+      final clean = identifier.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+      if (clean.isNotEmpty) {
+        await _messaging.subscribeToTopic('user_$clean');
+        debugPrint('Subscribed to private user topic: user_$clean');
+      }
+    } catch (e) {
+      debugPrint('Error subscribing to user topic: $e');
+    }
+  }
+
+  /// Show local notification strictly on this physical device
   Future<void> showLocalNotification({
     required String title,
     required String body,

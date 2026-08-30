@@ -1065,241 +1065,283 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
           const SizedBox(height: 24),
-          Row(
+          // 1. Announcement Title on top (Full Width)
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Announcement Title',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _announcementTitleController,
-                      decoration: const InputDecoration(
-                        hintText: 'e.g., Happy Eid Al-Fitr! 🌙',
-                        fillColor: Color(0xFFF8FAFC),
-                        filled: true,
-                      ),
-                    ),
-                  ],
+              Text(
+                'Announcement Title (Cinwaanka Fariinta)',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary,
                 ),
               ),
-              const SizedBox(width: 20),
-              Expanded(
-                flex: 3,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Announcement Message',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _announcementBodyController,
-                      decoration: const InputDecoration(
-                        hintText:
-                            'e.g., Nasiib Hospital wishes you a blessed Eid. Enjoy 20% off all consultations today!',
-                        fillColor: Color(0xFFF8FAFC),
-                        filled: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 20),
-              Padding(
-                padding: const EdgeInsets.only(top: 24.0),
-                child: SizedBox(
-                  height: 52,
-                  width: 200,
-                  child: ElevatedButton(
-                    onPressed: _isSendingBroadcast ? null : () async {
-                      final title = _announcementTitleController.text.trim();
-                      final body = _announcementBodyController.text.trim();
-                      if (title.isEmpty || body.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Please enter both title and message!',
-                            ),
-                          ),
-                        );
-                        return;
-                      }
-
-                      setState(() => _isSendingBroadcast = true);
-
-                      final String notifId = DateTime.now()
-                          .millisecondsSinceEpoch
-                          .toString();
-                      final String nowIso = DateTime.now()
-                          .toUtc()
-                          .toIso8601String();
-
-                      int emailSentCount = 0;
-
-                      try {
-                        final client = Supabase.instance.client;
-                        // 1. Insert in notifications for App Push
-                        await client.from('notifications').insert({
-                          'id': notifId,
-                          'title': title,
-                          'body': body,
-                          'created_at': nowIso,
-                          'sender': 'admin',
-                          'sender_label': 'Nasiib Hospital',
-                          'target_user_id': 'all',
-                        });
-
-                        await appState.loadNotificationsFromSupabase();
-
-                        // 2. Dispatch Email Broadcast if enabled
-                        if (_sendBroadcastToEmail) {
-                          try {
-                            final Set<String> collectedEmails = {};
-
-                            try {
-                              final patientsData = await client
-                                  .from('patients')
-                                  .select('email, full_name');
-                              if (patientsData is List) {
-                                for (final p in patientsData) {
-                                  final em = (p['email'] as String?)?.trim().toLowerCase();
-                                  if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
-                                    collectedEmails.add(em);
-                                  }
-                                }
-                              }
-                            } catch (pErr) {
-                              debugPrint("[ADMIN_BROADCAST] Patients table email read: $pErr");
-                            }
-
-                            try {
-                              final ordersData = await client
-                                  .from('orders')
-                                  .select('customer_email, email')
-                                  .limit(200);
-                              if (ordersData is List) {
-                                for (final o in ordersData) {
-                                  final em1 = (o['customer_email'] as String?)?.trim().toLowerCase();
-                                  final em2 = (o['email'] as String?)?.trim().toLowerCase();
-                                  if (em1 != null && em1.isNotEmpty && em1.contains('@') && em1.contains('.')) collectedEmails.add(em1);
-                                  if (em2 != null && em2.isNotEmpty && em2.contains('@') && em2.contains('.')) collectedEmails.add(em2);
-                                }
-                              }
-                            } catch (_) {}
-
-                            if (collectedEmails.isNotEmpty) {
-                              emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
-                                subject: title,
-                                announcementBody: body,
-                                recipientEmails: collectedEmails.toList(),
-                              );
-                            }
-                          } catch (mailErr) {
-                            debugPrint("[ADMIN_BROADCAST] Email dispatch error: $mailErr");
-                          }
-                        }
-
-                        _announcementTitleController.clear();
-                        _announcementBodyController.clear();
-
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: Colors.green,
-                              content: Text(
-                                _sendBroadcastToEmail && emailSentCount > 0
-                                    ? 'Fariinta App-ka iyo Email-ada ($emailSentCount bukaan) si guul leh ayaa loo diray!'
-                                    : 'Fariinta App-ka si guul leh ayaa loo diray!',
-                              ),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        debugPrint("[ADMIN_BROADCAST] Direct insert error: $e");
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('Cilad ayaa dhacday: $e'),
-                            ),
-                          );
-                        }
-                      } finally {
-                        if (mounted) {
-                          setState(() => _isSendingBroadcast = false);
-                        }
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryColor,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: _isSendingBroadcast
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                              SizedBox(width: 8),
-                              Text(
-                                'Send Broadcast',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _announcementTitleController,
+                style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w600),
+                decoration: InputDecoration(
+                  hintText: 'e.g., Happy Eid Al-Fitr! 🌙 / Warbixin Muhiim ah',
+                  fillColor: const Color(0xFFF8FAFC),
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                   ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Row(
+          const SizedBox(height: 18),
+
+          // 2. Announcement Message enlarged below Title (Multiline Large Text Area)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Checkbox(
-                value: _sendBroadcastToEmail,
-                activeColor: AppTheme.primaryColor,
-                onChanged: (val) {
+              Text(
+                'Announcement Message (Qoraalka Fariinta)',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _announcementBodyController,
+                minLines: 4,
+                maxLines: 8,
+                keyboardType: TextInputType.multiline,
+                style: GoogleFonts.plusJakartaSans(fontSize: 14, height: 1.5),
+                decoration: InputDecoration(
+                  hintText: 'Qor halkan faahfaahinta fariinta aad rabto inaad u dirto dhammaan bukaannada...',
+                  fillColor: const Color(0xFFF8FAFC),
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // 3. Email Checkbox and Send Broadcast Button Row
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              InkWell(
+                onTap: () {
                   setState(() {
-                    _sendBroadcastToEmail = val ?? true;
+                    _sendBroadcastToEmail = !_sendBroadcastToEmail;
                   });
                 },
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: _sendBroadcastToEmail,
+                        activeColor: AppTheme.primaryColor,
+                        onChanged: (val) {
+                          setState(() {
+                            _sendBroadcastToEmail = val ?? true;
+                          });
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.email_outlined, size: 18, color: AppTheme.primaryColor),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Sidoo kale fariintan Email ahaan ugu dir dhammaan bukaannada is-diiwaangeliyay (Send to All Patient Emails)',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(width: 4),
-              const Icon(Icons.email_outlined, size: 16, color: AppTheme.primaryColor),
-              const SizedBox(width: 6),
-              const Text(
-                'Sidoo kale fariintan Email ahaan ugu dir dhammaan bukaannada is-diiwaangeliyay (Send to All Patient Emails)',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textPrimary,
+              SizedBox(
+                height: 48,
+                width: 220,
+                child: ElevatedButton(
+                  onPressed: _isSendingBroadcast ? null : () async {
+                    final title = _announcementTitleController.text.trim();
+                    final body = _announcementBodyController.text.trim();
+                    if (title.isEmpty || body.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Please enter both title and message!',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
+                    setState(() => _isSendingBroadcast = true);
+
+                    final String notifId = DateTime.now()
+                        .millisecondsSinceEpoch
+                        .toString();
+                    final String nowIso = DateTime.now()
+                        .toUtc()
+                        .toIso8601String();
+
+                    int emailSentCount = 0;
+
+                    try {
+                      final client = Supabase.instance.client;
+                      // 1. Insert in notifications for App Push
+                      await client.from('notifications').insert({
+                        'id': notifId,
+                        'title': title,
+                        'body': body,
+                        'created_at': nowIso,
+                        'sender': 'admin',
+                        'sender_label': 'Nasiib Hospital',
+                        'target_user_id': 'all',
+                      });
+
+                      await appState.loadNotificationsFromSupabase();
+
+                      // 2. Dispatch Email Broadcast if enabled
+                      if (_sendBroadcastToEmail) {
+                        try {
+                          final Set<String> collectedEmails = {};
+
+                          try {
+                            final patientsData = await client
+                                .from('patients')
+                                .select('email, full_name');
+                            if (patientsData is List) {
+                              for (final p in patientsData) {
+                                final em = (p['email'] as String?)?.trim().toLowerCase();
+                                if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
+                                  collectedEmails.add(em);
+                                }
+                              }
+                            }
+                          } catch (pErr) {
+                            debugPrint("[ADMIN_BROADCAST] Patients table email read: $pErr");
+                          }
+
+                          try {
+                            final ordersData = await client
+                                .from('orders')
+                                .select('customer_email, email')
+                                .limit(200);
+                            if (ordersData is List) {
+                              for (final o in ordersData) {
+                                final em1 = (o['customer_email'] as String?)?.trim().toLowerCase();
+                                final em2 = (o['email'] as String?)?.trim().toLowerCase();
+                                if (em1 != null && em1.isNotEmpty && em1.contains('@') && em1.contains('.')) collectedEmails.add(em1);
+                                if (em2 != null && em2.isNotEmpty && em2.contains('@') && em2.contains('.')) collectedEmails.add(em2);
+                              }
+                            }
+                          } catch (_) {}
+
+                          if (collectedEmails.isNotEmpty) {
+                            emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
+                              subject: title,
+                              announcementBody: body,
+                              recipientEmails: collectedEmails.toList(),
+                            );
+                          }
+                        } catch (mailErr) {
+                          debugPrint("[ADMIN_BROADCAST] Email dispatch error: $mailErr");
+                        }
+                      }
+
+                      _announcementTitleController.clear();
+                      _announcementBodyController.clear();
+
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: Colors.green,
+                            content: Text(
+                              _sendBroadcastToEmail && emailSentCount > 0
+                                  ? 'Fariinta App-ka iyo Email-ada ($emailSentCount bukaan) si guul leh ayaa loo diray!'
+                                  : 'Fariinta App-ka si guul leh ayaa loo diray!',
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      debugPrint("[ADMIN_BROADCAST] Direct insert error: $e");
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: Colors.red,
+                            content: Text('Cilad ayaa dhacday: $e'),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _isSendingBroadcast = false);
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: _isSendingBroadcast
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                            SizedBox(width: 8),
+                            Text(
+                              'Send Broadcast',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ],

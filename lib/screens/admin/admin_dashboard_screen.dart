@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
@@ -1239,12 +1240,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           final Set<String> collectedEmails = {};
 
                           try {
-                            final patientsData = await client
-                                .from('patients')
-                                .select('email, full_name');
+                            final patientsData = await client.from('patients').select();
                             if (patientsData is List) {
                               for (final p in patientsData) {
-                                final em = (p['email'] as String?)?.trim().toLowerCase();
+                                final em = (p['email'] ?? p['patient_email'] ?? p['contact_email'] as String?)?.toString().trim().toLowerCase();
                                 if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
                                   collectedEmails.add(em);
                                 }
@@ -1255,10 +1254,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           }
 
                           try {
-                            final ordersData = await client
-                                .from('orders')
-                                .select('customer_email, email')
-                                .limit(200);
+                            final ordersData = await client.from('orders').select('customer_email, email').limit(200);
                             if (ordersData is List) {
                               for (final o in ordersData) {
                                 final em1 = (o['customer_email'] as String?)?.trim().toLowerCase();
@@ -1269,36 +1265,46 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             }
                           } catch (_) {}
 
-                          if (collectedEmails.isNotEmpty) {
-                            emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
-                              subject: title,
-                              announcementBody: body,
-                              recipientEmails: collectedEmails.toList(),
-                            );
-
-                            // Insert into Supabase broadcast_emails & emails table for persistent tracking
-                            for (final targetEmail in collectedEmails) {
-                              try {
-                                await client.from('broadcast_emails').insert({
-                                  'id': 'em_${DateTime.now().millisecondsSinceEpoch}_${targetEmail.hashCode.abs()}',
-                                  'recipient_email': targetEmail,
-                                  'subject': title,
-                                  'message': body,
-                                  'sender': 'Nasiib Hospital Admin',
-                                  'status': 'sent',
-                                  'created_at': nowIso,
-                                });
-                              } catch (_) {
-                                try {
-                                  await client.from('emails').insert({
-                                    'recipient_email': targetEmail,
-                                    'subject': title,
-                                    'body': body,
-                                    'status': 'sent',
-                                    'created_at': nowIso,
-                                  });
-                                } catch (_) {}
+                          try {
+                            final apptsData = await client.from('appointments').select().limit(200);
+                            if (apptsData is List) {
+                              for (final a in apptsData) {
+                                final em = (a['email'] ?? a['patient_email'] as String?)?.toString().trim().toLowerCase();
+                                if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) collectedEmails.add(em);
                               }
+                            }
+                          } catch (_) {}
+
+                          // If no emails found yet, add admin/system email as default test recipient
+                          if (collectedEmails.isEmpty) {
+                            collectedEmails.add('admin@nasiibhospital.com');
+                          }
+
+                          debugPrint("[ADMIN_BROADCAST] Collected ${collectedEmails.length} recipient emails: $collectedEmails");
+
+                          // 1. Send via Email Service
+                          emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
+                            subject: title,
+                            announcementBody: body,
+                            recipientEmails: collectedEmails.toList(),
+                          );
+
+                          // 2. Insert into Supabase broadcast_emails table
+                          for (final targetEmail in collectedEmails) {
+                            try {
+                              final row = {
+                                'id': 'em_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}',
+                                'recipient_email': targetEmail,
+                                'subject': title,
+                                'message': body,
+                                'sender': 'Nasiib Hospital Admin',
+                                'status': 'sent',
+                                'created_at': nowIso,
+                              };
+                              await client.from('broadcast_emails').insert(row);
+                              debugPrint("[ADMIN_BROADCAST] Successfully inserted row into broadcast_emails for $targetEmail");
+                            } catch (insertErr) {
+                              debugPrint("[ADMIN_BROADCAST] Error inserting into broadcast_emails: $insertErr");
                             }
                           }
                         } catch (mailErr) {

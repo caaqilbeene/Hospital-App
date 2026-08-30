@@ -1168,26 +1168,44 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         // 2. Dispatch Email Broadcast if enabled
                         if (_sendBroadcastToEmail) {
                           try {
-                            final patientsData = await client
-                                .from('patients')
-                                .select('email, full_name')
-                                .not('email', 'is', null);
+                            final Set<String> collectedEmails = {};
 
-                            final List<String> emailList = [];
-                            if (patientsData is List) {
-                              for (final p in patientsData) {
-                                final em = (p['email'] as String?)?.trim();
-                                if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
-                                  emailList.add(em);
+                            try {
+                              final patientsData = await client
+                                  .from('patients')
+                                  .select('email, full_name');
+                              if (patientsData is List) {
+                                for (final p in patientsData) {
+                                  final em = (p['email'] as String?)?.trim().toLowerCase();
+                                  if (em != null && em.isNotEmpty && em.contains('@') && em.contains('.')) {
+                                    collectedEmails.add(em);
+                                  }
                                 }
                               }
+                            } catch (pErr) {
+                              debugPrint("[ADMIN_BROADCAST] Patients table email read: $pErr");
                             }
 
-                            if (emailList.isNotEmpty) {
+                            try {
+                              final ordersData = await client
+                                  .from('orders')
+                                  .select('customer_email, email')
+                                  .limit(200);
+                              if (ordersData is List) {
+                                for (final o in ordersData) {
+                                  final em1 = (o['customer_email'] as String?)?.trim().toLowerCase();
+                                  final em2 = (o['email'] as String?)?.trim().toLowerCase();
+                                  if (em1 != null && em1.isNotEmpty && em1.contains('@') && em1.contains('.')) collectedEmails.add(em1);
+                                  if (em2 != null && em2.isNotEmpty && em2.contains('@') && em2.contains('.')) collectedEmails.add(em2);
+                                }
+                              }
+                            } catch (_) {}
+
+                            if (collectedEmails.isNotEmpty) {
                               emailSentCount = await EmailOtpService.instance.sendBroadcastEmail(
                                 subject: title,
                                 announcementBody: body,
-                                recipientEmails: emailList,
+                                recipientEmails: collectedEmails.toList(),
                               );
                             }
                           } catch (mailErr) {

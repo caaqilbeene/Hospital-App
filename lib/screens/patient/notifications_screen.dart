@@ -239,7 +239,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       );
                     },
                     child: GestureDetector(
-                      onTap: () => _showNotificationDetailModal(context, item),
+                      onTap: () {
+                        appState.markSingleNotificationAsRead(itemId);
+                        _showNotificationDetailModal(context, item);
+                      },
                       child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(

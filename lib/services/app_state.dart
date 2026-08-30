@@ -545,6 +545,11 @@ class AppState extends ChangeNotifier {
           .from('notifications')
           .select()
           .order('created_at', ascending: false);
+
+      final prefs = await SharedPreferences.getInstance();
+      final savedReadIds = prefs.getStringList('read_notification_ids_v1') ?? [];
+      _readNotificationIds.addAll(savedReadIds);
+
       _notifications.clear();
       for (var n in notificationsData) {
         String displayTime = 'Just now';
@@ -577,12 +582,17 @@ class AppState extends ChangeNotifier {
             displayTime = n['created_at'].toString();
           }
         }
+
+        final String nId = n['id'].toString();
+        final bool isRead = _readNotificationIds.contains(nId);
+
         _notifications.add({
-          'id': n['id'].toString(),
+          'id': nId,
           'title': n['title'] ?? '',
           'body': n['body'] ?? '',
           'time': displayTime,
-          'isRead': false,
+          'sender': n['sender_label'] ?? n['sender'] ?? 'Nasiib Hospital',
+          'isRead': isRead,
         });
       }
 
@@ -1069,13 +1079,14 @@ class AppState extends ChangeNotifier {
 
   // Notifications List (Populated dynamically from Supabase DB)
   final List<Map<String, dynamic>> _notifications = [];
+  final Set<String> _readNotificationIds = {};
 
   List<Map<String, dynamic>> _dbPatients = [];
   List<Map<String, dynamic>> get dbPatients => _dbPatients;
 
   final Map<String, bool> _patientsTyping = {};
   bool isPatientTyping(String patientId) => _patientsTyping[patientId] ?? false;
-  bool _hasUnreadNotification = true;
+  bool _hasUnreadNotification = false;
   bool _pushNotificationsEnabled = true;
 
   // Chat Messages List
@@ -1094,7 +1105,7 @@ class AppState extends ChangeNotifier {
   // Getters
   List<Map<String, dynamic>> get notifications => _notifications;
   bool get hasUnreadNotification =>
-      _hasUnreadNotification && _pushNotificationsEnabled;
+      unreadNotificationCount > 0 && _pushNotificationsEnabled;
   bool get pushNotificationsEnabled => _pushNotificationsEnabled;
 
   void setPushNotificationsEnabled(bool enabled) {
@@ -1103,21 +1114,39 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> markNotificationsAsRead() async {
-    _hasUnreadNotification = false;
-    final String nowIso = DateTime.now().toUtc().toIso8601String();
     for (var n in _notifications) {
       n['isRead'] = true;
+      _readNotificationIds.add(n['id'].toString());
+    }
+    _hasUnreadNotification = false;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        'read_notification_ids_v1',
+        _readNotificationIds.toList(),
+      );
+    } catch (e) {
+      debugPrint("[NOTIFICATIONS] Error saving notification read state: $e");
+    }
+  }
+
+  Future<void> markSingleNotificationAsRead(String id) async {
+    _readNotificationIds.add(id);
+    for (var n in _notifications) {
+      if (n['id'].toString() == id) {
+        n['isRead'] = true;
+      }
     }
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('last_read_notification_time_v1', nowIso);
       await prefs.setStringList(
         'read_notification_ids_v1',
-        _notifications.map((n) => n['id'].toString()).toList(),
+        _readNotificationIds.toList(),
       );
     } catch (e) {
-      debugPrint("[NOTIFICATIONS] Error saving notification read state: $e");
+      debugPrint("[NOTIFICATIONS] Error saving single notification read state: $e");
     }
   }
 
@@ -1131,9 +1160,8 @@ class AppState extends ChangeNotifier {
             .order('created_at', ascending: false);
 
         final prefs = await SharedPreferences.getInstance();
-        final String? lastReadTimeStr = prefs.getString('last_read_notification_time_v1');
-        final List<String> readIds = prefs.getStringList('read_notification_ids_v1') ?? [];
-        final DateTime? lastReadTime = lastReadTimeStr != null ? DateTime.tryParse(lastReadTimeStr) : null;
+        final List<String> savedReadIds = prefs.getStringList('read_notification_ids_v1') ?? [];
+        _readNotificationIds.addAll(savedReadIds);
 
         _notifications.clear();
         final Set<String> seenIds = {};
@@ -1144,14 +1172,7 @@ class AppState extends ChangeNotifier {
           seenIds.add(id);
 
           final String createdAtStr = item['created_at']?.toString() ?? '';
-          final DateTime? createdAt = DateTime.tryParse(createdAtStr);
-
-          bool isRead = readIds.contains(id);
-          if (!isRead && lastReadTime != null && createdAt != null) {
-            if (createdAt.isBefore(lastReadTime) || createdAt.isAtSameMomentAs(lastReadTime)) {
-              isRead = true;
-            }
-          }
+          final bool isRead = _readNotificationIds.contains(id);
 
           _notifications.add({
             'id': id,
@@ -1173,10 +1194,11 @@ class AppState extends ChangeNotifier {
   int get unreadNotificationCount {
     final Set<String> unreadUniqueIds = {};
     for (var n in _notifications) {
+      final String nId = n['id'].toString();
       final isRead = n['isRead'];
-      final bool unread = isRead == false || isRead == 0 || isRead == 'false';
+      final bool unread = isRead != true && !_readNotificationIds.contains(nId);
       if (unread) {
-        unreadUniqueIds.add(n['id'].toString());
+        unreadUniqueIds.add(nId);
       }
     }
     return unreadUniqueIds.length;

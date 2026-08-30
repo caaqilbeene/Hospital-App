@@ -1275,6 +1275,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               announcementBody: body,
                               recipientEmails: collectedEmails.toList(),
                             );
+
+                            // Insert into Supabase broadcast_emails & emails table for persistent tracking
+                            for (final targetEmail in collectedEmails) {
+                              try {
+                                await client.from('broadcast_emails').insert({
+                                  'id': 'em_${DateTime.now().millisecondsSinceEpoch}_${targetEmail.hashCode.abs()}',
+                                  'recipient_email': targetEmail,
+                                  'subject': title,
+                                  'message': body,
+                                  'sender': 'Nasiib Hospital Admin',
+                                  'status': 'sent',
+                                  'created_at': nowIso,
+                                });
+                              } catch (_) {
+                                try {
+                                  await client.from('emails').insert({
+                                    'recipient_email': targetEmail,
+                                    'subject': title,
+                                    'body': body,
+                                    'status': 'sent',
+                                    'created_at': nowIso,
+                                  });
+                                } catch (_) {}
+                              }
+                            }
                           }
                         } catch (mailErr) {
                           debugPrint("[ADMIN_BROADCAST] Email dispatch error: $mailErr");

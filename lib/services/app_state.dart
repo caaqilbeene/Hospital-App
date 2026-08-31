@@ -2140,7 +2140,12 @@ class AppState extends ChangeNotifier {
         ? appointment.createdAt
         : DateTime.now().toIso8601String();
 
+    final String safeRef = (appointment.referenceId.isNotEmpty && appointment.referenceId != '#APT0')
+        ? appointment.referenceId
+        : '#APT${(10000 + Random().nextInt(89999))}';
+
     appointment = appointment.copyWith(
+      referenceId: safeRef,
       patientImageUrl: finalPatientImg,
       queueNumber: dynamicQueue,
       createdAt: finalCreatedAt,
@@ -2148,11 +2153,7 @@ class AppState extends ChangeNotifier {
 
     final client = SupabaseService.instance.client;
     if (client != null && SupabaseService.instance.isInitialized) {
-      final String safeRef = (appointment.referenceId.isNotEmpty && appointment.referenceId != '#APT0')
-          ? appointment.referenceId
-          : '#APT${(10000 + Random().nextInt(89999))}';
-
-      // Exactly ONE single Supabase insert call with exact patient details
+      // 1. Try standard comprehensive payload
       final Map<String, dynamic> payload = {
         'reference_id': safeRef,
         'doctor_id': appointment.doctorId,
@@ -2162,8 +2163,6 @@ class AppState extends ChangeNotifier {
         'patient_phone': appointment.patientPhone,
         'patient_age': appointment.patientAge,
         'patient_gender': appointment.patientGender,
-        'patient_image': finalPatientImg,
-        'patient_avatar_url': finalPatientImg,
         'date': appointment.date,
         'time': appointment.time,
         'appointment_type': appointment.appointmentType,
@@ -2175,9 +2174,8 @@ class AppState extends ChangeNotifier {
         'created_at': appointment.createdAt,
       };
 
-      if (_currentUser != null && _currentUser!.id.isNotEmpty) {
-        payload['user_id'] = _currentUser!.id;
-        payload['patient_id'] = _currentUser!.id;
+      if (finalPatientImg.isNotEmpty) {
+        payload['patient_image'] = finalPatientImg;
       }
 
       try {
@@ -2187,13 +2185,64 @@ class AppState extends ChangeNotifier {
         }
         debugPrint("[SUPABASE_SUCCESS] Appointment inserted into public.appointments successfully!");
       } catch (err) {
-        debugPrint("[SUPABASE_ERROR] Error inserting appointment: $err");
+        debugPrint("[SUPABASE_ERROR] Full insert error: $err, trying standard payload...");
+        try {
+          final standardPayload = {
+            'reference_id': safeRef,
+            'doctor_id': appointment.doctorId,
+            'doctor_name': appointment.doctorName,
+            'doctor_specialty': appointment.doctorSpecialty,
+            'patient_name': appointment.patientName,
+            'patient_phone': appointment.patientPhone,
+            'patient_age': appointment.patientAge,
+            'patient_gender': appointment.patientGender,
+            'date': appointment.date,
+            'time': appointment.time,
+            'appointment_type': appointment.appointmentType,
+            'status': appointment.status,
+            'payment_method': appointment.paymentMethod,
+            'amount': appointment.amount > 0 ? appointment.amount : 15.0,
+            'queue_number': appointment.queueNumber,
+            'created_at': appointment.createdAt,
+          };
+          final res2 = await client.from('appointments').insert(standardPayload).select().maybeSingle();
+          if (res2 != null && res2['id'] != null) {
+            appointment = appointment.copyWith(id: res2['id'].toString());
+          }
+          debugPrint("[SUPABASE_SUCCESS] Standard appointment inserted successfully!");
+        } catch (err2) {
+          debugPrint("[SUPABASE_ERROR] Standard insert error: $err2, trying minimal payload...");
+          try {
+            final minimalPayload = {
+              'reference_id': safeRef,
+              'doctor_name': appointment.doctorName,
+              'doctor_specialty': appointment.doctorSpecialty,
+              'patient_name': appointment.patientName,
+              'patient_phone': appointment.patientPhone,
+              'date': appointment.date,
+              'time': appointment.time,
+              'status': appointment.status,
+              'payment_method': appointment.paymentMethod,
+              'amount': appointment.amount > 0 ? appointment.amount : 15.0,
+              'queue_number': appointment.queueNumber,
+              'created_at': appointment.createdAt,
+            };
+            final res3 = await client.from('appointments').insert(minimalPayload).select().maybeSingle();
+            if (res3 != null && res3['id'] != null) {
+              appointment = appointment.copyWith(id: res3['id'].toString());
+            }
+            debugPrint("[SUPABASE_SUCCESS] Minimal fallback appointment inserted successfully!");
+          } catch (err3) {
+            debugPrint("[SUPABASE_ERROR] All Supabase appointment insert attempts failed: $err3");
+          }
+        }
       }
     }
 
     // Persist this booking to the user's booked IDs so it is never dropped on refresh
     if (appointment.id.isNotEmpty) _userBookedAppointmentIds.add(appointment.id);
     if (appointment.referenceId.isNotEmpty) _userBookedAppointmentIds.add(appointment.referenceId);
+    if (appointment.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(appointment.patientPhone);
     _saveUserBookedAppointmentIdsToPrefs();
 
     // Deduplicate in-memory list so duplicate twin records are never added locally
@@ -2202,6 +2251,7 @@ class AppState extends ChangeNotifier {
         (a.referenceId.isNotEmpty && a.referenceId == appointment.referenceId));
     // Always insert at the very top (index 0)
     _appointments.insert(0, appointment);
+    _saveLocalAppointmentsToPrefs();
     notifyListeners();
     return true;
   }
@@ -2376,6 +2426,25 @@ class AppState extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('saved_deleted_appointment_ids_v1', _deletedAppointmentIds.toList());
     } catch (_) {}
+  }
+
+  Future<void> _saveLocalAppointmentsToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> encoded = _appointments.map((a) => jsonEncode(a.toJson())).toList();
+      await prefs.setStringList('saved_local_appointments_cache_v2', encoded);
+    } catch (_) {}
+  }
+
+  Future<List<AppointmentModel>> _loadLocalAppointmentsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('saved_local_appointments_cache_v2');
+      if (list != null && list.isNotEmpty) {
+        return list.map((str) => AppointmentModel.fromJson(jsonDecode(str))).toList();
+      }
+    } catch (_) {}
+    return [];
   }
 
   Future<void> deleteAppointment(String id) async {
@@ -4100,8 +4169,21 @@ class AppState extends ChangeNotifier {
     try {
       await _loadUserBookedAppointmentIdsFromPrefs();
       await _loadDeletedAppointmentIdsFromPrefs();
+      final localCached = await _loadLocalAppointmentsFromPrefs();
 
       final List<AppointmentModel> updatedList = [];
+
+      // Include all valid non-deleted locally cached appointments
+      for (final lApt in localCached) {
+        if (_deletedAppointmentIds.contains(lApt.id) ||
+            (lApt.referenceId.isNotEmpty && _deletedAppointmentIds.contains(lApt.referenceId))) {
+          continue;
+        }
+        if (lApt.id.isNotEmpty) _userBookedAppointmentIds.add(lApt.id);
+        if (lApt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(lApt.referenceId);
+        if (lApt.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(lApt.patientPhone);
+        updatedList.add(lApt);
+      }
 
       // 1. Fetch Doctor Appointments exclusively for this patient
       final aptData = await client
@@ -4121,7 +4203,8 @@ class AppState extends ChangeNotifier {
 
             // Match if booked on this device/account OR matches phone/name/user_id
             final bool isBookedByMe = _userBookedAppointmentIds.contains(apt.id) ||
-                (apt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(apt.referenceId));
+                (apt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(apt.referenceId)) ||
+                (apt.patientPhone.isNotEmpty && _userBookedAppointmentIds.contains(apt.patientPhone));
 
             final String aptPhone = apt.patientPhone.replaceAll(RegExp(r'\D'), '');
             final bool matchesPhone = possibleFormats.isNotEmpty && possibleFormats.any((f) {
@@ -4143,6 +4226,7 @@ class AppState extends ChangeNotifier {
             // Ensure tracked in user booked IDs
             if (apt.id.isNotEmpty) _userBookedAppointmentIds.add(apt.id);
             if (apt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(apt.referenceId);
+            if (apt.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(apt.patientPhone);
 
             final idx = updatedList.indexWhere((a) =>
                 a.id == apt.id ||
@@ -4278,6 +4362,7 @@ class AppState extends ChangeNotifier {
       updatedList.sort((a, b) => parseDateSafe(b.createdAt).compareTo(parseDateSafe(a.createdAt)));
       _appointments.clear();
       _appointments.addAll(updatedList);
+      _saveLocalAppointmentsToPrefs();
 
       notifyListeners();
       debugPrint('[APPOINTMENTS] Loaded ${_appointments.length} appointments & nurse orders.');

@@ -8687,140 +8687,155 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   // ==========================================
   Widget _buildAppointmentsTab(BuildContext context) {
     final appState = context.watch<AppState>();
-    final appointments = appState.appointments;
+    final client = SupabaseService.instance.client;
+    final bool canStream = client != null && SupabaseService.instance.isInitialized;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Patient Appointments',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          'Approve or update booking queues.',
-          style: GoogleFonts.plusJakartaSans(
-            color: AppTheme.textSecondary,
-            fontSize: 13,
-          ),
-        ),
-        const SizedBox(height: 20),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: canStream
+          ? client.from('appointments').stream(primaryKey: ['id']).order('created_at', ascending: false)
+          : const Stream.empty(),
+      builder: (context, snap) {
+        final List<AppointmentModel> appointments;
+        if (snap.hasData && snap.data != null && snap.data!.isNotEmpty) {
+          appointments = snap.data!.map((row) => AppointmentModel.fromJson(row)).toList();
+        } else {
+          appointments = appState.appointments;
+        }
 
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: appointments.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final apt = appointments[index];
-            return Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Patient Appointments',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Patient: ${apt.patientName} (${apt.patientPhone})',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Doctor: ${apt.doctorName} • ${apt.date} ${apt.time}',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        Text(
-                          'Queue #: ${apt.queueNumber} • Ref: ${apt.referenceId}',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12,
-                            color: AppTheme.primaryColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
+            ),
+            Text(
+              'Approve or update booking queues.',
+              style: GoogleFonts.plusJakartaSans(
+                color: AppTheme.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: appointments.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final apt = appointments[index];
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
                   ),
-                  PopupMenuButton<String>(
-                    onSelected: (status) {
-                      appState.updateAppointmentStatus(apt.id, status);
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'Confirmed',
-                        child: Text('Confirm / Approve'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'Completed',
-                        child: Text('Mark Completed'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'Cancelled',
-                        child: Text('Cancel Appointment'),
-                      ),
-                    ],
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryLight,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          Text(
-                            apt.status,
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.primaryColor,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Patient: ${apt.patientName} (${apt.patientPhone})',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Doctor: ${apt.doctorName} • ${apt.date} ${apt.time}',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                            Text(
+                              'Queue #: ${apt.queueNumber} • Ref: ${apt.referenceId}',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                color: AppTheme.primaryColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuButton<String>(
+                        onSelected: (status) {
+                          appState.updateAppointmentStatus(apt.id, status);
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'Confirmed',
+                            child: Text('Confirm / Approve'),
                           ),
-                          const Icon(
-                            Icons.arrow_drop_down,
-                            color: AppTheme.primaryColor,
+                          const PopupMenuItem(
+                            value: 'Completed',
+                            child: Text('Mark Completed'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'Cancelled',
+                            child: Text('Cancel Appointment'),
                           ),
                         ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryLight,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              Text(
+                                apt.status,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.primaryColor,
+                                ),
+                              ),
+                              const Icon(
+                                Icons.arrow_drop_down,
+                                color: AppTheme.primaryColor,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Color(0xFFEF4444),
+                          size: 20,
+                        ),
+                        tooltip: 'Tirtir Ballanta',
+                        onPressed: () {
+                          _confirmDeleteAppointmentDialog(
+                            context,
+                            appState,
+                            apt.id,
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline_rounded,
-                      color: Color(0xFFEF4444),
-                      size: 20,
-                    ),
-                    tooltip: 'Tirtir Ballanta',
-                    onPressed: () {
-                      _confirmDeleteAppointmentDialog(
-                        context,
-                        appState,
-                        apt.id,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ],
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 

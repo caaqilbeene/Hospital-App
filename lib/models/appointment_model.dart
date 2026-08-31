@@ -63,14 +63,14 @@ class AppointmentModel {
       patientPhone: json['patient_phone'] ?? json['patientPhone'] ?? '',
       patientAge: json['patient_age'] ?? json['patientAge'] ?? 24,
       patientGender: json['patient_gender'] ?? json['patientGender'] ?? 'Male',
-      reasonForVisit: json['reason_for_visit'] ?? json['reasonForVisit'] ?? '',
+      reasonForVisit: json['reason_for_visit'] ?? json['reasonForVisit'] ?? json['reason'] ?? '',
       paymentMethod: json['payment_method'] ?? json['paymentMethod'] ?? 'EVC Plus',
-      amount: (json['amount'] as num?)?.toDouble() ?? 10.0,
-      queueNumber: json['queue_number'] ?? json['queueNumber'] ?? 13,
+      amount: (json['amount'] ?? json['consultation_fee'] ?? json['fee'] as num?)?.toDouble() ?? 15.0,
+      queueNumber: json['queue_number'] ?? json['queueNumber'] ?? 1,
       status: json['status'] ?? 'Confirmed',
-      createdAt: json['created_at'] ?? DateTime.now().toIso8601String(),
+      createdAt: json['created_at'] ?? json['createdAt'] ?? DateTime.now().toIso8601String(),
       prescription: json['prescription']?.toString(),
-      patientImageUrl: json['patient_image'] ?? json['patient_avatar_url'] ?? json['patient_image_url'] ?? json['patientImageUrl'],
+      patientImageUrl: json['patient_image'] ?? json['patient_avatar_url'] ?? json['patient_image_url'] ?? json['patientImageUrl'] ?? json['avatar_url'],
     );
   }
 

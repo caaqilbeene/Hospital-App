@@ -2083,47 +2083,30 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     );
 
                     if (isMobile) {
-                      return Column(
-                        children: [
-                          cardPharmacy,
-                          const SizedBox(height: 12),
-                          cardDoctors,
-                          const SizedBox(height: 12),
-                          cardNurses,
-                          const SizedBox(height: 12),
-                          cardGrandTotal,
-                        ],
-                      );
-                    } else if (isTablet) {
-                      return Column(
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(child: cardPharmacy),
-                              const SizedBox(width: 14),
-                              Expanded(child: cardDoctors),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Expanded(child: cardNurses),
-                              const SizedBox(width: 14),
-                              Expanded(child: cardGrandTotal),
-                            ],
-                          ),
-                        ],
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            SizedBox(width: 230, child: cardPharmacy),
+                            const SizedBox(width: 10),
+                            SizedBox(width: 230, child: cardDoctors),
+                            const SizedBox(width: 10),
+                            SizedBox(width: 230, child: cardNurses),
+                            const SizedBox(width: 10),
+                            SizedBox(width: 230, child: cardGrandTotal),
+                          ],
+                        ),
                       );
                     }
 
                     return Row(
                       children: [
                         Expanded(child: cardPharmacy),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 10),
                         Expanded(child: cardDoctors),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 10),
                         Expanded(child: cardNurses),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 10),
                         Expanded(child: cardGrandTotal),
                       ],
                     );
@@ -2149,54 +2132,57 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     VoidCallback? onTap,
   }) {
     final cardContent = Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x05000000),
-            blurRadius: 10,
-            offset: Offset(0, 4),
+            color: Color(0x04000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: bgColor,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                child: Icon(icon, color: iconColor, size: 20),
+                child: Icon(icon, color: iconColor, size: 16),
               ),
               if (showSparkline)
                 SizedBox(
-                  width: 84,
-                  height: 38,
+                  width: 52,
+                  height: 26,
                   child: CustomPaint(
                     painter: SparklineChartPainter(color: iconColor),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           Text(
             title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               color: const Color(0xFF64748B),
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
@@ -2206,23 +2192,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   value,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 20,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
                     color: const Color(0xFF0F172A),
                   ),
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                 decoration: BoxDecoration(
                   color: const Color(0xFFDCFCE7),
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(5),
                 ),
                 child: Text(
                   change,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: FontWeight.bold,
                     color: const Color(0xFF16A34A),
                   ),
@@ -2230,14 +2216,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Row(
             children: [
               Expanded(
                 child: Text(
                   subtext,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 10,
+                    fontSize: 9.5,
                     color: const Color(0xFF94A3B8),
                   ),
                 ),
@@ -2245,7 +2233,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               if (onTap != null)
                 const Icon(
                   Icons.arrow_forward_ios_rounded,
-                  size: 10,
+                  size: 8,
                   color: Color(0xFF94A3B8),
                 ),
             ],

@@ -3378,6 +3378,17 @@ class AppState extends ChangeNotifier {
       if (_currentUser != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(_currentUser!.id)) {
         cleanPatientId = _currentUser!.id;
       }
+      NurseModel? matchingNurse;
+      for (final n in _nurses) {
+        if ((cleanNurseId != null && n.id == cleanNurseId) ||
+            n.name.toLowerCase().trim() == nurseName.toLowerCase().trim() ||
+            nurseName.toLowerCase().contains(n.name.toLowerCase())) {
+          matchingNurse = n;
+          break;
+        }
+      }
+
+      final String nurseImg = matchingNurse?.imageUrl ?? '';
 
       final cleanNursePayload = <String, dynamic>{
         'nurse_name': nurseName,
@@ -3391,6 +3402,11 @@ class AppState extends ChangeNotifier {
         'status': 'pending',
         'service_notes': '#NURSE-$hexSuffix',
       };
+      if (nurseImg.isNotEmpty) {
+        cleanNursePayload['nurse_image'] = nurseImg;
+        cleanNursePayload['nurse_avatar_url'] = nurseImg;
+        cleanNursePayload['image_url'] = nurseImg;
+      }
       if (cleanPatientId != null) cleanNursePayload['patient_id'] = cleanPatientId;
       if (cleanNurseId != null) cleanNursePayload['nurse_id'] = cleanNurseId;
 
@@ -4111,13 +4127,32 @@ class AppState extends ChangeNotifier {
 
             final String uniqueNurseId = 'nurse_${nId.isNotEmpty ? nId : refId.replaceAll(RegExp(r'\D'), '')}';
 
+            NurseModel? matchingNurse;
+            for (final n in _nurses) {
+              if (n.id == (nRow['nurse_id']?.toString() ?? '') ||
+                  n.name.toLowerCase().trim() == nurseName.toLowerCase().trim() ||
+                  nurseName.toLowerCase().contains(n.name.toLowerCase())) {
+                matchingNurse = n;
+                break;
+              }
+            }
+
+            final String resolvedNurseImage = (nRow['nurse_image'] ?? nRow['nurse_avatar_url'] ?? nRow['image_url'] ?? matchingNurse?.imageUrl ?? '').toString().trim();
+
+            final String finalNurseImg = resolvedNurseImage.isNotEmpty
+                ? resolvedNurseImage
+                : (matchingNurse?.imageUrl ?? 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=500');
+
             final idx = updatedList.indexWhere((a) =>
                 a.id == uniqueNurseId ||
                 (refId.isNotEmpty && a.referenceId == refId) ||
                 (nId.isNotEmpty && a.id == nId));
 
             if (idx != -1) {
-              updatedList[idx] = updatedList[idx].copyWith(status: nStatus);
+              updatedList[idx] = updatedList[idx].copyWith(
+                status: nStatus,
+                doctorImageUrl: finalNurseImg,
+              );
             } else {
               updatedList.add(
                 AppointmentModel(
@@ -4126,7 +4161,7 @@ class AppState extends ChangeNotifier {
                   doctorId: 'nurse_dispatch',
                   doctorName: 'Nurse ($nurseName)',
                   doctorSpecialty: 'Home Care Service',
-                  doctorImageUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=500',
+                  doctorImageUrl: finalNurseImg,
                   hospitalName: 'Nasiib Home Care',
                   date: 'Today',
                   time: 'Flexible Dispatch',

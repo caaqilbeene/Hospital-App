@@ -2099,6 +2099,11 @@ class AppState extends ChangeNotifier {
         'created_at': appointment.createdAt,
       };
 
+      if (_currentUser != null && _currentUser!.id.isNotEmpty) {
+        payload['user_id'] = _currentUser!.id;
+        payload['patient_id'] = _currentUser!.id;
+      }
+
       try {
         final res = await client.from('appointments').insert(payload).select().maybeSingle();
         if (res != null && res['id'] != null) {
@@ -2109,6 +2114,11 @@ class AppState extends ChangeNotifier {
         debugPrint("[SUPABASE_ERROR] Error inserting appointment: $err");
       }
     }
+
+    // Persist this booking to the user's booked IDs so it is never dropped on refresh
+    if (appointment.id.isNotEmpty) _userBookedAppointmentIds.add(appointment.id);
+    if (appointment.referenceId.isNotEmpty) _userBookedAppointmentIds.add(appointment.referenceId);
+    _saveUserBookedAppointmentIdsToPrefs();
 
     // Deduplicate in-memory list so duplicate twin records are never added locally
     _appointments.removeWhere((a) =>
@@ -2255,6 +2265,24 @@ class AppState extends ChangeNotifier {
   }
 
   final Set<String> _deletedAppointmentIds = {};
+  final Set<String> _userBookedAppointmentIds = {};
+
+  Future<void> _loadUserBookedAppointmentIdsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('saved_user_booked_appointment_ids_v1');
+      if (list != null) {
+        _userBookedAppointmentIds.addAll(list);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveUserBookedAppointmentIdsToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('saved_user_booked_appointment_ids_v1', _userBookedAppointmentIds.toList());
+    } catch (_) {}
+  }
 
   Future<void> _loadDeletedAppointmentIdsFromPrefs() async {
     try {
@@ -3395,6 +3423,11 @@ class AppState extends ChangeNotifier {
         debugPrint('[NURSE_ORDERS] Setting nurse busy error: $nurseBusyErr');
       }
 
+      // Persist this nurse booking to user's booked IDs
+      _userBookedAppointmentIds.add(bookingId);
+      _userBookedAppointmentIds.add('#NURSE-$hexSuffix');
+      _saveUserBookedAppointmentIdsToPrefs();
+
       await fetchAppointmentsAndNurseOrders();
       notifyListeners();
 
@@ -3972,7 +4005,10 @@ class AppState extends ChangeNotifier {
     ].where((s) => s.isNotEmpty).toSet().toList();
 
     try {
+      await _loadUserBookedAppointmentIdsFromPrefs();
       await _loadDeletedAppointmentIdsFromPrefs();
+
+      final List<AppointmentModel> updatedList = [];
 
       // 1. Fetch Doctor Appointments exclusively for this patient
       final aptData = await client
@@ -3981,7 +4017,6 @@ class AppState extends ChangeNotifier {
           .order('created_at', ascending: false);
 
       if (aptData is List) {
-        _appointments.clear();
         for (final row in aptData) {
           try {
             final apt = AppointmentModel.fromJson(Map<String, dynamic>.from(row));
@@ -3991,25 +4026,38 @@ class AppState extends ChangeNotifier {
               continue;
             }
 
-            // Filter to only match current logged in patient
-            if (possibleFormats.isNotEmpty) {
-              final String aptPhone = apt.patientPhone.replaceAll(RegExp(r'\D'), '');
-              final bool matchesPhone = possibleFormats.any((f) {
-                final cleanF = f.replaceAll(RegExp(r'\D'), '');
-                return (cleanF.isNotEmpty && aptPhone.contains(cleanF)) || apt.patientPhone.contains(f);
-              });
-              if (!matchesPhone && apt.patientName != _currentUser?.fullName) {
-                continue; // Skip other users' appointments
-              }
+            // Match if booked on this device/account OR matches phone/name/user_id
+            final bool isBookedByMe = _userBookedAppointmentIds.contains(apt.id) ||
+                (apt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(apt.referenceId));
+
+            final String aptPhone = apt.patientPhone.replaceAll(RegExp(r'\D'), '');
+            final bool matchesPhone = possibleFormats.isNotEmpty && possibleFormats.any((f) {
+              final cleanF = f.replaceAll(RegExp(r'\D'), '');
+              return (cleanF.isNotEmpty && (aptPhone.contains(cleanF) || cleanF.contains(aptPhone))) || apt.patientPhone.contains(f);
+            });
+
+            final bool matchesName = _currentUser != null &&
+                apt.patientName.trim().isNotEmpty &&
+                (apt.patientName.trim().toLowerCase() == _currentUser!.fullName.trim().toLowerCase());
+
+            final String rowUserId = (row['user_id'] ?? row['patient_id'] ?? '').toString();
+            final bool matchesUserId = _currentUser != null && rowUserId.isNotEmpty && rowUserId == _currentUser!.id;
+
+            if (!isBookedByMe && !matchesPhone && !matchesName && !matchesUserId) {
+              continue; // Skip appointments belonging to other users
             }
 
-            final idx = _appointments.indexWhere((a) =>
+            // Ensure tracked in user booked IDs
+            if (apt.id.isNotEmpty) _userBookedAppointmentIds.add(apt.id);
+            if (apt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(apt.referenceId);
+
+            final idx = updatedList.indexWhere((a) =>
                 a.id == apt.id ||
                 (a.referenceId.isNotEmpty && a.referenceId == apt.referenceId));
             if (idx != -1) {
-              _appointments[idx] = apt;
+              updatedList[idx] = apt;
             } else {
-              _appointments.add(apt);
+              updatedList.add(apt);
             }
           } catch (_) {}
         }
@@ -4026,40 +4074,55 @@ class AppState extends ChangeNotifier {
           _dbNurseOrders = List<Map<String, dynamic>>.from(nurseData);
           for (final nRow in _dbNurseOrders) {
             final nId = (nRow['id'] ?? nRow['booking_id'] ?? '').toString();
-            final refId = (nRow['service_notes'] ?? nRow['reference_id'] ?? nRow['booking_id'] ?? '#NURSE-ORDER').toString();
-            if (_deletedAppointmentIds.contains(nId) || _deletedAppointmentIds.contains(refId)) {
+            final refId = (nRow['service_notes'] ?? nRow['reference_id'] ?? nRow['booking_id'] ?? '').toString();
+            if (_deletedAppointmentIds.contains(nId) || (refId.isNotEmpty && _deletedAppointmentIds.contains(refId))) {
               continue; // Skip deleted nurse orders
             }
 
+            final bool isNurseBookedByMe = (nId.isNotEmpty && _userBookedAppointmentIds.contains(nId)) ||
+                (refId.isNotEmpty && _userBookedAppointmentIds.contains(refId));
+
             final phone = (nRow['phone'] ?? nRow['patient_phone'] ?? '').toString();
-            if (possibleFormats.isNotEmpty) {
-              final String cleanNPhone = phone.replaceAll(RegExp(r'\D'), '');
-              final bool matchesNPhone = possibleFormats.any((f) {
-                final cleanF = f.replaceAll(RegExp(r'\D'), '');
-                return (cleanF.isNotEmpty && cleanNPhone.contains(cleanF)) || phone.contains(f);
-              });
-              if (!matchesNPhone) continue;
+            final String cleanNPhone = phone.replaceAll(RegExp(r'\D'), '');
+            final bool matchesNPhone = possibleFormats.isNotEmpty && possibleFormats.any((f) {
+              final cleanF = f.replaceAll(RegExp(r'\D'), '');
+              return (cleanF.isNotEmpty && (cleanNPhone.contains(cleanF) || cleanF.contains(cleanNPhone))) || phone.contains(f);
+            });
+
+            final String custName = (nRow['customer_name'] ?? nRow['patient_name'] ?? '').toString().trim().toLowerCase();
+            final bool matchesNName = _currentUser != null && custName.isNotEmpty && custName == _currentUser!.fullName.trim().toLowerCase();
+
+            final String nUserId = (nRow['patient_id'] ?? nRow['user_id'] ?? '').toString();
+            final bool matchesNUserId = _currentUser != null && nUserId.isNotEmpty && nUserId == _currentUser!.id;
+
+            if (!isNurseBookedByMe && !matchesNPhone && !matchesNName && !matchesNUserId) {
+              continue;
             }
+
+            if (nId.isNotEmpty) _userBookedAppointmentIds.add(nId);
+            if (refId.isNotEmpty) _userBookedAppointmentIds.add(refId);
 
             final nStatus = (nRow['status'] ?? nRow['order_status'] ?? 'pending').toString();
             final nurseName = (nRow['nurse_name'] ?? nRow['service_type'] ?? 'Home Care Nurse').toString();
-            final patientName = (nRow['customer_name'] ?? nRow['patient_name'] ?? 'Patient').toString();
+            final patientName = (nRow['customer_name'] ?? nRow['patient_name'] ?? (_currentUser?.fullName ?? 'Patient')).toString();
             final fee = (nRow['amount_paid'] ?? nRow['fee'] ?? nRow['total_amount'] ?? 0.0);
-            final double amount = (fee is num) ? fee.toDouble() : (double.tryParse(fee.toString()) ?? 0.0);
+            final double amount = (fee is num) ? fee.toDouble() : (double.tryParse(fee.toString()) ?? 3.0);
             final paymentMethod = (nRow['payment_method'] ?? 'EVC Plus').toString();
 
-            final idx = _appointments.indexWhere((a) =>
-                (nId.isNotEmpty && a.id == nId) ||
-                (refId.isNotEmpty && a.referenceId.contains(refId)) ||
-                (a.referenceId.isNotEmpty && refId.contains(a.referenceId)));
+            final String uniqueNurseId = 'nurse_${nId.isNotEmpty ? nId : refId.replaceAll(RegExp(r'\D'), '')}';
+
+            final idx = updatedList.indexWhere((a) =>
+                a.id == uniqueNurseId ||
+                (refId.isNotEmpty && a.referenceId == refId) ||
+                (nId.isNotEmpty && a.id == nId));
 
             if (idx != -1) {
-              _appointments[idx] = _appointments[idx].copyWith(status: nStatus);
+              updatedList[idx] = updatedList[idx].copyWith(status: nStatus);
             } else {
-              _appointments.add(
+              updatedList.add(
                 AppointmentModel(
-                  id: nId.isNotEmpty ? nId : 'nurse_$refId',
-                  referenceId: refId,
+                  id: uniqueNurseId,
+                  referenceId: refId.isNotEmpty ? refId : '#NURSE-${Random().nextInt(99999)}',
                   doctorId: 'nurse_dispatch',
                   doctorName: 'Nurse ($nurseName)',
                   doctorSpecialty: 'Home Care Service',
@@ -4069,15 +4132,15 @@ class AppState extends ChangeNotifier {
                   time: 'Flexible Dispatch',
                   appointmentType: 'Home Care',
                   patientName: patientName,
-                  patientPhone: phone,
+                  patientPhone: phone.isNotEmpty ? phone : (_currentUser?.phoneNumber ?? ''),
                   patientAge: 30,
                   patientGender: 'Flexible',
-                  reasonForVisit: 'Home Care Request',
+                  reasonForVisit: (nRow['service_notes'] ?? 'Home Care Request').toString(),
                   paymentMethod: paymentMethod,
                   amount: amount,
                   queueNumber: 1,
                   status: nStatus,
-                  createdAt: DateTime.now().toIso8601String(),
+                  createdAt: (nRow['created_at'] ?? DateTime.now().toIso8601String()).toString(),
                 ),
               );
             }
@@ -4087,8 +4150,15 @@ class AppState extends ChangeNotifier {
         debugPrint('[NURSE_ORDERS] Fetch error: $err');
       }
 
+      _saveUserBookedAppointmentIdsToPrefs();
+
+      // Sort by creation date descending
+      updatedList.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _appointments.clear();
+      _appointments.addAll(updatedList);
+
       notifyListeners();
-      debugPrint('[APPOINTMENTS] Loaded ${_appointments.length} appointments & ${_dbNurseOrders.length} nurse orders.');
+      debugPrint('[APPOINTMENTS] Loaded ${_appointments.length} appointments & nurse orders.');
     } catch (e) {
       debugPrint('[APPOINTMENTS] fetchAppointmentsAndNurseOrders error: $e');
     }

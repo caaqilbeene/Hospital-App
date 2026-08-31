@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
+import '../../models/appointment_model.dart';
 import '../../services/app_state.dart';
 
 class AppointmentHistoryScreen extends StatefulWidget {
@@ -12,6 +13,8 @@ class AppointmentHistoryScreen extends StatefulWidget {
 }
 
 class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
+  String _selectedFilter = 'All'; // 'All', 'Doctors', 'Nurses'
+
   @override
   void initState() {
     super.initState();
@@ -20,11 +23,35 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
     });
   }
 
+  bool _isNurseApt(AppointmentModel apt) {
+    final docId = apt.doctorId.toLowerCase();
+    final docSpec = apt.doctorSpecialty.toLowerCase();
+    final docName = apt.doctorName.toLowerCase();
+    final aptType = apt.appointmentType.toLowerCase();
+    return docId.startsWith('nurse') ||
+        docSpec.contains('home care') ||
+        docName.contains('nurse') ||
+        aptType.contains('home care');
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    final appointments = appState.appointments;
-    final totalPaid = appointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);
+    final allAppointments = appState.appointments;
+
+    final doctorAppointments = allAppointments.where((a) => !_isNurseApt(a)).toList();
+    final nurseAppointments = allAppointments.where((a) => _isNurseApt(a)).toList();
+
+    final List<AppointmentModel> displayedAppointments;
+    if (_selectedFilter == 'Doctors') {
+      displayedAppointments = doctorAppointments;
+    } else if (_selectedFilter == 'Nurses') {
+      displayedAppointments = nurseAppointments;
+    } else {
+      displayedAppointments = allAppointments;
+    }
+
+    final totalPaid = displayedAppointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F8),
@@ -54,7 +81,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
             children: [
             // 1. Overview Summary Card
             Container(
-              margin: const EdgeInsets.all(20.0),
+              margin: const EdgeInsets.fromLTRB(20, 10, 20, 16),
               padding: const EdgeInsets.all(20.0),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
@@ -78,7 +105,9 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Total Bookings',
+                          _selectedFilter == 'Doctors'
+                              ? 'Doctor Bookings'
+                              : (_selectedFilter == 'Nurses' ? 'Nurse Orders' : 'Total Bookings'),
                           style: GoogleFonts.plusJakartaSans(
                             color: Colors.white70,
                             fontSize: 13,
@@ -90,7 +119,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                             const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 20),
                             const SizedBox(width: 8),
                             Text(
-                              '${appointments.length}',
+                              '${displayedAppointments.length}',
                               style: GoogleFonts.plusJakartaSans(
                                 color: Colors.white,
                                 fontSize: 24,
@@ -141,42 +170,59 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
               ),
             ),
 
-            // 2. Bookings List Title
+            // 2. Filter Category Tabs (All / Doctors / Nurses)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
               child: Row(
                 children: [
-                  Text(
-                    'All Bookings List',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
+                  _buildFilterTab(
+                    title: 'Dhammaan',
+                    count: allAppointments.length,
+                    filterKey: 'All',
+                    icon: Icons.grid_view_rounded,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildFilterTab(
+                    title: 'Dhaqaatiirta',
+                    count: doctorAppointments.length,
+                    filterKey: 'Doctors',
+                    icon: Icons.medical_services_rounded,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildFilterTab(
+                    title: 'Kalkaalisada',
+                    count: nurseAppointments.length,
+                    filterKey: 'Nurses',
+                    icon: Icons.healing_rounded,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
 
             // 3. Scrollable List View
             Expanded(
-              child: appointments.isEmpty
+              child: displayedAppointments.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             Icons.calendar_today_outlined,
-                            size: 64,
+                            size: 56,
                             color: AppTheme.textLight.withOpacity(0.5),
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            'No appointments booked yet.',
+                            _selectedFilter == 'Doctors'
+                                ? 'Wax ballan dhaqtar ah kuma jiraan.'
+                                : (_selectedFilter == 'Nurses'
+                                    ? 'Wax dalab kalkaaliso ah kuma jiraan.'
+                                    : 'Wax ballamo ah kuma jiraan.'),
                             style: GoogleFonts.plusJakartaSans(
                               color: AppTheme.textSecondary,
                               fontSize: 14,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
@@ -184,19 +230,22 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                      itemCount: appointments.length,
+                      itemCount: displayedAppointments.length,
                       itemBuilder: (context, index) {
-                        final apt = appointments[index];
+                        final apt = displayedAppointments[index];
+                        final bool isNurse = _isNurseApt(apt);
                         return Container(
                           margin: const EdgeInsets.only(bottom: 14),
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFFEDF1F5)),
+                            border: Border.all(
+                              color: isNurse ? const Color(0xFFE2E8F0) : const Color(0xFFEDF1F5),
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.015),
+                                color: Colors.black.withOpacity(0.02),
                                 blurRadius: 10,
                                 offset: const Offset(0, 4),
                               ),
@@ -205,20 +254,66 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Row 1: Doctor Info
+                              // Top Tag: Service Category Badge (Doctor vs Nurse)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: isNurse ? const Color(0xFFF0FDF4) : const Color(0xFFEFF6FF),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: isNurse ? const Color(0xFFBBF7D0) : const Color(0xFFBFDBFE),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          isNurse ? Icons.healing_rounded : Icons.medical_services_rounded,
+                                          size: 13,
+                                          color: isNurse ? const Color(0xFF15803D) : const Color(0xFF1D4ED8),
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          isNurse ? '👩‍⚕️ Nurse Home Care' : '🩺 Doctor Appointment',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: isNurse ? const Color(0xFF15803D) : const Color(0xFF1D4ED8),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (apt.referenceId.isNotEmpty)
+                                    Text(
+                                      apt.referenceId,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppTheme.textSecondary,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Row 1: Doctor / Nurse Info
                               Row(
                                 children: [
                                   CircleAvatar(
-                                    radius: 20,
-                                    backgroundColor: AppTheme.primaryLight,
+                                    radius: 22,
+                                    backgroundColor: isNurse ? const Color(0xFFDCFCE7) : AppTheme.primaryLight,
                                     backgroundImage: apt.doctorImageUrl.isNotEmpty
                                         ? NetworkImage(apt.doctorImageUrl)
                                         : null,
                                     child: apt.doctorImageUrl.isEmpty
-                                        ? const Icon(
-                                            Icons.medical_services_outlined,
-                                            color: AppTheme.primaryColor,
-                                            size: 20,
+                                        ? Icon(
+                                            isNurse ? Icons.healing_rounded : Icons.medical_services_outlined,
+                                            color: isNurse ? const Color(0xFF15803D) : AppTheme.primaryColor,
+                                            size: 22,
                                           )
                                         : null,
                                   ),
@@ -231,7 +326,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                           apt.doctorName,
                                           style: GoogleFonts.plusJakartaSans(
                                             fontWeight: FontWeight.bold,
-                                            fontSize: 14,
+                                            fontSize: 15,
                                             color: AppTheme.textPrimary,
                                           ),
                                         ),
@@ -239,7 +334,8 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                           apt.doctorSpecialty,
                                           style: GoogleFonts.plusJakartaSans(
                                             fontSize: 12,
-                                            color: AppTheme.textSecondary,
+                                            fontWeight: FontWeight.w500,
+                                            color: isNurse ? const Color(0xFF16A34A) : AppTheme.textSecondary,
                                           ),
                                         ),
                                       ],
@@ -248,7 +344,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFE3F2FD),
+                                      color: isNurse ? const Color(0xFFF3E8FF) : const Color(0xFFE3F2FD),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
@@ -256,7 +352,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                       style: GoogleFonts.plusJakartaSans(
                                         fontSize: 11,
                                         fontWeight: FontWeight.bold,
-                                        color: Colors.blue.shade700,
+                                        color: isNurse ? const Color(0xFF7E22CE) : Colors.blue.shade700,
                                       ),
                                     ),
                                   ),
@@ -277,6 +373,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                 ],
                               ),
                               const SizedBox(height: 10),
+
                               // Patient Info Row with Exact Patient Photo Avatar
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -325,9 +422,10 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                 ),
                               ),
                               const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 12),
+                                padding: EdgeInsets.symmetric(vertical: 10),
                                 child: Divider(height: 1, color: Color(0xFFEDF1F5)),
                               ),
+
                               // Row 2: Date & Time Info
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -371,20 +469,21 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
+
                               // Row 3: Payment & Status Badge
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  // Payment info
+                                  // Payment info & Amount
                                   Row(
                                     children: [
                                       const Icon(Icons.payment_rounded, size: 14, color: AppTheme.successGreen),
                                       const SizedBox(width: 6),
                                       Text(
-                                        'Paid via ${apt.paymentMethod}',
+                                        '\$${apt.amount.toStringAsFixed(2)} • ${apt.paymentMethod}',
                                         style: GoogleFonts.plusJakartaSans(
                                           fontSize: 12,
-                                          fontWeight: FontWeight.w600,
+                                          fontWeight: FontWeight.bold,
                                           color: AppTheme.successGreen,
                                         ),
                                       ),
@@ -444,6 +543,79 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
           ],
         ),
        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterTab({
+    required String title,
+    required int count,
+    required String filterKey,
+    required IconData icon,
+  }) {
+    final bool isSelected = _selectedFilter == filterKey;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _selectedFilter = filterKey),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? AppTheme.primaryColor : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected ? AppTheme.primaryColor : const Color(0xFFE2E8F0),
+            ),
+            boxShadow: [
+              if (isSelected)
+                BoxShadow(
+                  color: AppTheme.primaryColor.withOpacity(0.25),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+            ],
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: isSelected ? Colors.white : AppTheme.textSecondary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    title,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                      color: isSelected ? Colors.white : AppTheme.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.white.withOpacity(0.2) : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$count',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.white : AppTheme.primaryColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

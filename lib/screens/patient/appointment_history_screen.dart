@@ -39,8 +39,20 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
     final appState = context.watch<AppState>();
     final allAppointments = appState.appointments;
 
-    final doctorAppointments = allAppointments.where((a) => !_isNurseApt(a)).toList();
-    final nurseAppointments = allAppointments.where((a) => _isNurseApt(a)).toList();
+    DateTime parseDateSafe(String raw) {
+      if (raw.trim().isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+      final dt = DateTime.tryParse(raw.trim());
+      if (dt != null) return dt;
+      final intVal = int.tryParse(raw.trim());
+      if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal);
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    final sortedAppointments = List<AppointmentModel>.from(allAppointments)
+      ..sort((a, b) => parseDateSafe(b.createdAt).compareTo(parseDateSafe(a.createdAt)));
+
+    final doctorAppointments = sortedAppointments.where((a) => !_isNurseApt(a)).toList();
+    final nurseAppointments = sortedAppointments.where((a) => _isNurseApt(a)).toList();
 
     final List<AppointmentModel> displayedAppointments;
     if (_selectedFilter == 'Doctors') {
@@ -48,7 +60,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
     } else if (_selectedFilter == 'Nurses') {
       displayedAppointments = nurseAppointments;
     } else {
-      displayedAppointments = allAppointments;
+      displayedAppointments = sortedAppointments;
     }
 
     final totalPaid = displayedAppointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);

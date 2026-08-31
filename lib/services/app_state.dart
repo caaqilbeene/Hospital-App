@@ -2059,6 +2059,65 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Calculate accurate dynamic sequential queue number from Supabase across all patients for this doctor on this date
+  Future<int> getRealNextQueueNumber({
+    required String doctorId,
+    required String doctorName,
+    required String date,
+  }) async {
+    final client = SupabaseService.instance.client;
+    int maxQueue = 0;
+
+    final cleanDoc = doctorId.trim().toLowerCase();
+    final cleanName = doctorName.trim().toLowerCase();
+    final cleanDate = date.trim().toLowerCase();
+
+    // 1. Check in-memory appointments
+    for (final a in _appointments) {
+      final matchDoc = a.doctorId.trim().toLowerCase() == cleanDoc ||
+          a.doctorName.trim().toLowerCase() == cleanName ||
+          (cleanName.isNotEmpty && (cleanName.contains(a.doctorName.trim().toLowerCase()) || a.doctorName.trim().toLowerCase().contains(cleanName)));
+      final matchDate = a.date.trim().toLowerCase() == cleanDate;
+      if (matchDoc && matchDate && a.queueNumber > maxQueue) {
+        maxQueue = a.queueNumber;
+      }
+    }
+
+    // 2. Query Supabase appointments table across all patients for this doctor and date
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final res = await client
+            .from('appointments')
+            .select('queue_number, doctor_id, doctor_name, date');
+
+        if (res is List) {
+          for (final row in res) {
+            final rowDocId = (row['doctor_id'] ?? '').toString().trim().toLowerCase();
+            final rowDocName = (row['doctor_name'] ?? '').toString().trim().toLowerCase();
+            final rowDate = (row['date'] ?? '').toString().trim().toLowerCase();
+
+            final bool matchDoc = rowDocId == cleanDoc ||
+                rowDocName == cleanName ||
+                (cleanName.isNotEmpty && (cleanName.contains(rowDocName) || rowDocName.contains(cleanName)));
+            final bool matchDate = rowDate == cleanDate;
+
+            if (matchDoc && matchDate) {
+              final rawQ = row['queue_number'];
+              final qNum = (rawQ is num) ? rawQ.toInt() : (int.tryParse(rawQ?.toString() ?? '') ?? 0);
+              if (qNum > maxQueue) {
+                maxQueue = qNum;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[QUEUE] Error fetching max queue from Supabase: $e');
+      }
+    }
+
+    return maxQueue + 1;
+  }
+
   Future<bool> addAppointment(AppointmentModel appointment) async {
     final String activeUserImg = (currentUser?.avatarUrl != null && currentUser!.avatarUrl.trim().isNotEmpty)
         ? currentUser!.avatarUrl.trim()
@@ -2068,7 +2127,24 @@ class AppState extends ChangeNotifier {
         ? appointment.patientImageUrl!.trim()
         : activeUserImg;
 
-    appointment = appointment.copyWith(patientImageUrl: finalPatientImg);
+    // Dynamically calculate next queue number if not already assigned
+    final int dynamicQueue = (appointment.queueNumber > 1)
+        ? appointment.queueNumber
+        : await getRealNextQueueNumber(
+            doctorId: appointment.doctorId,
+            doctorName: appointment.doctorName,
+            date: appointment.date,
+          );
+
+    final String finalCreatedAt = (appointment.createdAt.isNotEmpty && DateTime.tryParse(appointment.createdAt) != null)
+        ? appointment.createdAt
+        : DateTime.now().toIso8601String();
+
+    appointment = appointment.copyWith(
+      patientImageUrl: finalPatientImg,
+      queueNumber: dynamicQueue,
+      createdAt: finalCreatedAt,
+    );
 
     final client = SupabaseService.instance.client;
     if (client != null && SupabaseService.instance.isInitialized) {
@@ -2124,6 +2200,7 @@ class AppState extends ChangeNotifier {
     _appointments.removeWhere((a) =>
         a.id == appointment.id ||
         (a.referenceId.isNotEmpty && a.referenceId == appointment.referenceId));
+    // Always insert at the very top (index 0)
     _appointments.insert(0, appointment);
     notifyListeners();
     return true;
@@ -4187,8 +4264,18 @@ class AppState extends ChangeNotifier {
 
       _saveUserBookedAppointmentIdsToPrefs();
 
-      // Sort by creation date descending
-      updatedList.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Robust DateTime parsing to guarantee the newest booking is ALWAYS on top
+      DateTime parseDateSafe(String raw) {
+        if (raw.trim().isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+        final dt = DateTime.tryParse(raw.trim());
+        if (dt != null) return dt;
+        final intVal = int.tryParse(raw.trim());
+        if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal);
+        return DateTime.fromMillisecondsSinceEpoch(0);
+      }
+
+      // Sort by creation date descending (newest on top)
+      updatedList.sort((a, b) => parseDateSafe(b.createdAt).compareTo(parseDateSafe(a.createdAt)));
       _appointments.clear();
       _appointments.addAll(updatedList);
 

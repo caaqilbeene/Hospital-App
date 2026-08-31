@@ -367,7 +367,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
     } else {
       // Appointment payment flow
-      appState.confirmCurrentBooking();
+      final int dynamicQueue = await appState.getRealNextQueueNumber(
+        doctorId: widget.booking.doctorId,
+        doctorName: widget.booking.doctorName,
+        date: widget.booking.date,
+      );
+
       final confirmedBooking = AppointmentModel(
         id: widget.booking.id,
         referenceId: widget.booking.referenceId,
@@ -386,17 +391,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
         reasonForVisit: widget.booking.reasonForVisit,
         paymentMethod: _methodLabel,
         amount: widget.booking.amount,
-        queueNumber: widget.booking.queueNumber,
+        queueNumber: dynamicQueue,
         status: 'Confirmed',
-        createdAt: widget.booking.createdAt,
+        createdAt: DateTime.now().toIso8601String(),
       );
-      appState.addAppointment(confirmedBooking);
+      await appState.addAppointment(confirmedBooking);
 
       if (mounted) {
         // Show local notification strictly on this patient's device
         PushNotificationService.instance.showLocalNotification(
           title: 'Nasiib Hospital',
-          body: 'Ballantaadii Dhaqtarka waa la xaqiijiyay! Lambarka safkaaga waa #${widget.booking.queueNumber}.',
+          body: 'Ballantaadii Dhaqtarka waa la xaqiijiyay! Lambarka safkaaga waa #$dynamicQueue.',
         );
 
         _showPaymentSuccessDialog(
@@ -411,7 +416,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           doctorSpecialty: widget.booking.doctorSpecialty,
           appointmentDate: widget.booking.date,
           appointmentTime: widget.booking.time,
-          queueNumber: widget.booking.queueNumber,
+          queueNumber: dynamicQueue,
         );
       }
     }

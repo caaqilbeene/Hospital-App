@@ -1923,157 +1923,213 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- KPI CARDS ROW (Realtime Pharmacy & Revenue Metrics) ---
+  // --- KPI CARDS ROW (Realtime Pharmacy, Doctors, Nurses & Total Hospital Revenue Metrics) ---
   Widget _buildCarePlusKpiCardsRow(AppState appState) {
+    final client = SupabaseService.instance.client;
+    final bool canStream = client != null && SupabaseService.instance.isInitialized;
+
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
-          ? SupabaseService.instance.client!.from('orders').stream(primaryKey: ['id'])
+      stream: canStream
+          ? client.from('orders').stream(primaryKey: ['id'])
           : const Stream.empty(),
-      builder: (context, snapshot) {
-        final List<Map<String, dynamic>> orders = (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty)
-            ? snapshot.data!
+      builder: (context, ordersSnap) {
+        final List<Map<String, dynamic>> orders = (ordersSnap.hasData && ordersSnap.data != null && ordersSnap.data!.isNotEmpty)
+            ? ordersSnap.data!
             : appState.orders;
 
-        final now = DateTime.now();
-        final todayStr = DateFormat('yyyy-MM-dd').format(now);
+        return StreamBuilder<List<Map<String, dynamic>>>(
+          stream: canStream
+              ? client.from('appointments').stream(primaryKey: ['id'])
+              : const Stream.empty(),
+          builder: (context, apptsSnap) {
+            final List<Map<String, dynamic>> rawAppts = (apptsSnap.hasData && apptsSnap.data != null && apptsSnap.data!.isNotEmpty)
+                ? apptsSnap.data!
+                : appState.appointments.map((a) => <String, dynamic>{
+                    'id': a.id,
+                    'doctor_name': a.doctorName,
+                    'doctor_specialty': a.doctorSpecialty,
+                    'patient_name': a.patientName,
+                    'patient_phone': a.patientPhone,
+                    'amount': a.amount,
+                    'consultation_fee': a.amount,
+                    'status': a.status,
+                    'created_at': a.createdAt,
+                    'queue_number': a.queueNumber,
+                    'payment_method': a.paymentMethod,
+                  }).toList();
 
-        int todaysOrdersCount = 0;
-        double todaysRevenueSum = 0.0;
-        int totalOrdersCount = orders.length;
-
-        for (final o in orders) {
-          final createdAt = o['created_at']?.toString() ?? o['date']?.toString() ?? '';
-          final status = (o['status'] ?? '').toString();
-          final rawAmount = o['total_amount'] ?? o['total'] ?? o['amount'];
-          final totalAmount = (rawAmount as num?)?.toDouble() ??
-                              (double.tryParse(rawAmount?.toString() ?? '') ?? 0.0);
-
-          bool isToday = false;
-          if (createdAt.isNotEmpty) {
-            if (createdAt.contains(todayStr)) {
-              isToday = true;
-            } else {
-              try {
-                final dt = DateTime.parse(createdAt).toLocal();
-                if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
-                  isToday = true;
-                }
-              } catch (_) {}
-            }
-          }
-
-          if (isToday) {
-            todaysOrdersCount++;
-            if (!status.toLowerCase().contains('cancel')) {
-              todaysRevenueSum += totalAmount;
-            }
-          }
-        }
-
-        final formattedRevenue = todaysRevenueSum.toStringAsFixed(2);
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isMobile = constraints.maxWidth < 700;
-            final isTablet = constraints.maxWidth >= 700 && constraints.maxWidth < 1100;
-
-            final card1 = _buildCarePlusStatCard(
-              title: 'Dalabaadka Maanta (Dawooyinka)',
-              value: '$todaysOrdersCount',
-              change: '↗ Live',
-              subtext: 'Dalab dawo maanta la helay (Riix)',
-              icon: Icons.shopping_bag_outlined,
-              iconColor: const Color(0xFF6366F1),
-              bgColor: const Color(0xFFEEF2FF),
-              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
-            );
-
-            final card2 = _buildCarePlusStatCard(
-              title: 'Dakhliga Dawooyinka (Maanta)',
-              value: '\$$formattedRevenue USD',
-              change: '↗ Live',
-              subtext: 'Dakhliga iibka dawooyinka (Riix)',
-              icon: Icons.attach_money_rounded,
-              iconColor: const Color(0xFF10B981),
-              bgColor: const Color(0xFFECFDF5),
-              showSparkline: true,
-              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
-            );
-
-            final card3 = _buildCarePlusStatCard(
-              title: 'Dalabaadka Guud (Dawooyinka)',
-              value: '$totalOrdersCount',
-              change: '↗ Live',
-              subtext: 'Wadarta dalabaadka dawooyinka (Riix)',
-              icon: Icons.assignment_rounded,
-              iconColor: const Color(0xFF8B5CF6),
-              bgColor: const Color(0xFFF5F3FF),
-              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
-            );
-
-            final card4 = StreamBuilder<List<Map<String, dynamic>>>(
-              stream: (SupabaseService.instance.client != null && SupabaseService.instance.isInitialized)
-                  ? SupabaseService.instance.client!.from('nurse_orders').stream(primaryKey: ['id'])
+            return StreamBuilder<List<Map<String, dynamic>>>(
+              stream: canStream
+                  ? client.from('nurse_orders').stream(primaryKey: ['id'])
                   : const Stream.empty(),
               builder: (context, nurseSnap) {
-                final nurseList = nurseSnap.data ?? [];
-                final pendingCount = nurseList.where((o) => (o['status'] ?? o['order_status'] ?? '').toString().toLowerCase() == 'pending').length;
-                return _buildCarePlusStatCard(
-                  title: 'Home Care Requests',
-                  value: '${nurseList.length}',
-                  change: '$pendingCount Pending',
-                  subtext: 'Active Nurse Orders',
-                  icon: Icons.home_work_rounded,
-                  iconColor: const Color(0xFF059669),
-                  bgColor: const Color(0xFFD1FAE5),
+                final List<Map<String, dynamic>> nurseList = (nurseSnap.hasData && nurseSnap.data != null && nurseSnap.data!.isNotEmpty)
+                    ? nurseSnap.data!
+                    : [];
+
+                final now = DateTime.now();
+                final todayStr = DateFormat('yyyy-MM-dd').format(now);
+
+                bool isToday(dynamic rawDate) {
+                  if (rawDate == null) return false;
+                  final str = rawDate.toString();
+                  if (str.contains(todayStr)) return true;
+                  try {
+                    final dt = DateTime.parse(str).toLocal();
+                    return dt.year == now.year && dt.month == now.month && dt.day == now.day;
+                  } catch (_) {
+                    return false;
+                  }
+                }
+
+                // 1. Pharmacy calculations
+                int todaysOrdersCount = 0;
+                double todaysPharmacyRev = 0.0;
+                for (final o in orders) {
+                  final status = (o['status'] ?? '').toString().toLowerCase();
+                  if (isToday(o['created_at'] ?? o['date'])) {
+                    todaysOrdersCount++;
+                    if (!status.contains('cancel')) {
+                      final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                      final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                      todaysPharmacyRev += amt;
+                    }
+                  }
+                }
+
+                // 2. Doctor Bookings calculations
+                int todaysDoctorCount = 0;
+                double todaysDoctorRev = 0.0;
+                for (final a in rawAppts) {
+                  final status = (a['status'] ?? '').toString().toLowerCase();
+                  if (isToday(a['created_at'] ?? a['date'])) {
+                    todaysDoctorCount++;
+                    if (!status.contains('cancel') && !status.contains('reject')) {
+                      final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                      final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                      todaysDoctorRev += amt;
+                    }
+                  }
+                }
+
+                // 3. Nurse Home Care calculations
+                int todaysNurseCount = 0;
+                double todaysNurseRev = 0.0;
+                for (final n in nurseList) {
+                  final status = (n['status'] ?? n['order_status'] ?? '').toString().toLowerCase();
+                  if (isToday(n['created_at'] ?? n['date'])) {
+                    todaysNurseCount++;
+                    if (!status.contains('cancel') && !status.contains('reject')) {
+                      final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                      final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                      todaysNurseRev += amt;
+                    }
+                  }
+                }
+
+                final double grandTotalToday = todaysPharmacyRev + todaysDoctorRev + todaysNurseRev;
+
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isMobile = constraints.maxWidth < 700;
+                    final isTablet = constraints.maxWidth >= 700 && constraints.maxWidth < 1200;
+
+                    final cardPharmacy = _buildCarePlusStatCard(
+                      title: 'Dakhliga Dawooyinka (Maanta)',
+                      value: '\$${todaysPharmacyRev.toStringAsFixed(2)} USD',
+                      change: '$todaysOrdersCount Dalab',
+                      subtext: 'Pharmacy Revenue (Riix Chart)',
+                      icon: Icons.medication_rounded,
+                      iconColor: const Color(0xFF10B981),
+                      bgColor: const Color(0xFFECFDF5),
+                      showSparkline: true,
+                      onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
+                    );
+
+                    final cardDoctors = _buildCarePlusStatCard(
+                      title: 'Dakhliga Dhaqaatiirta (Maanta)',
+                      value: '\$${todaysDoctorRev.toStringAsFixed(2)} USD',
+                      change: '$todaysDoctorCount Ballan',
+                      subtext: 'Doctor Booking Revenue (Riix Chart)',
+                      icon: Icons.medical_services_rounded,
+                      iconColor: const Color(0xFF2563EB),
+                      bgColor: const Color(0xFFEFF6FF),
+                      showSparkline: true,
+                      onTap: () => _showDoctorRevenueAnalyticsDialog(context, appState, rawAppts),
+                    );
+
+                    final cardNurses = _buildCarePlusStatCard(
+                      title: 'Dakhliga Kalkaalisada (Maanta)',
+                      value: '\$${todaysNurseRev.toStringAsFixed(2)} USD',
+                      change: '$todaysNurseCount Dalab',
+                      subtext: 'Nurse Home Care (Riix Chart)',
+                      icon: Icons.health_and_safety_rounded,
+                      iconColor: const Color(0xFF059669),
+                      bgColor: const Color(0xFFD1FAE5),
+                      showSparkline: true,
+                      onTap: () => _showNurseRevenueAnalyticsDialog(context, appState, nurseList),
+                    );
+
+                    final cardGrandTotal = _buildCarePlusStatCard(
+                      title: 'Wadarta Dakhliga Isbitaalka (Maanta)',
+                      value: '\$${grandTotalToday.toStringAsFixed(2)} USD',
+                      change: '↗ All Live',
+                      subtext: '3-da Adeeg ee Isbitaalka Nasiib',
+                      icon: Icons.account_balance_wallet_rounded,
+                      iconColor: const Color(0xFF7C3AED),
+                      bgColor: const Color(0xFFF3E8FF),
+                      showSparkline: true,
+                      onTap: () => _showCombinedRevenueAnalyticsDialog(context, appState, orders, rawAppts, nurseList),
+                    );
+
+                    if (isMobile) {
+                      return Column(
+                        children: [
+                          cardPharmacy,
+                          const SizedBox(height: 12),
+                          cardDoctors,
+                          const SizedBox(height: 12),
+                          cardNurses,
+                          const SizedBox(height: 12),
+                          cardGrandTotal,
+                        ],
+                      );
+                    } else if (isTablet) {
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: cardPharmacy),
+                              const SizedBox(width: 14),
+                              Expanded(child: cardDoctors),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(child: cardNurses),
+                              const SizedBox(width: 14),
+                              Expanded(child: cardGrandTotal),
+                            ],
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: cardPharmacy),
+                        const SizedBox(width: 14),
+                        Expanded(child: cardDoctors),
+                        const SizedBox(width: 14),
+                        Expanded(child: cardNurses),
+                        const SizedBox(width: 14),
+                        Expanded(child: cardGrandTotal),
+                      ],
+                    );
+                  },
                 );
               },
-            );
-
-            if (isMobile) {
-              return Column(
-                children: [
-                  card1,
-                  const SizedBox(height: 12),
-                  card2,
-                  const SizedBox(height: 12),
-                  card3,
-                  const SizedBox(height: 12),
-                  card4,
-                ],
-              );
-            } else if (isTablet) {
-              return Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: card1),
-                      const SizedBox(width: 14),
-                      Expanded(child: card2),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(child: card3),
-                      const SizedBox(width: 14),
-                      Expanded(child: card4),
-                    ],
-                  ),
-                ],
-              );
-            }
-
-            return Row(
-              children: [
-                Expanded(child: card1),
-                const SizedBox(width: 14),
-                Expanded(child: card2),
-                const SizedBox(width: 14),
-                Expanded(child: card3),
-                const SizedBox(width: 14),
-                Expanded(child: card4),
-              ],
             );
           },
         );
@@ -2770,6 +2826,1398 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                   );
                                 },
                               ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- INTERACTIVE DOCTOR REVENUE & APPOINTMENTS ANALYTICS MODAL ---
+  void _showDoctorRevenueAnalyticsDialog(
+    BuildContext context,
+    AppState appState,
+    List<Map<String, dynamic>> allAppts,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String selectedFilter = 'This Week';
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final now = DateTime.now();
+
+            DateTime parseDateSafe(dynamic raw) {
+              if (raw == null) return DateTime.fromMillisecondsSinceEpoch(0);
+              final str = raw.toString().trim();
+              if (str.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+              final dt = DateTime.tryParse(str);
+              if (dt != null) return dt.toLocal();
+              final intVal = int.tryParse(str);
+              if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal).toLocal();
+              return DateTime.fromMillisecondsSinceEpoch(0);
+            }
+
+            bool isSameDate(DateTime a, DateTime b) {
+              return a.year == b.year && a.month == b.month && a.day == b.day;
+            }
+
+            final yesterday = now.subtract(const Duration(days: 1));
+            final twoDaysAgo = now.subtract(const Duration(days: 2));
+
+            final List<Map<String, dynamic>> filteredAppts = [];
+            for (final a in allAppts) {
+              final aDate = parseDateSafe(a['created_at'] ?? a['date']);
+              bool matches = false;
+
+              if (selectedFilter == 'Today') {
+                matches = isSameDate(aDate, now);
+              } else if (selectedFilter == 'Yesterday') {
+                matches = isSameDate(aDate, yesterday);
+              } else if (selectedFilter == '2 Days Ago') {
+                matches = isSameDate(aDate, twoDaysAgo);
+              } else if (selectedFilter == 'This Week') {
+                matches = aDate.isAfter(now.subtract(const Duration(days: 7)));
+              } else if (selectedFilter == 'This Month') {
+                matches = aDate.isAfter(now.subtract(const Duration(days: 30)));
+              } else if (selectedFilter == 'This Year') {
+                matches = aDate.isAfter(now.subtract(const Duration(days: 365)));
+              } else {
+                matches = true;
+              }
+
+              if (matches) filteredAppts.add(a);
+            }
+
+            double totalRevenue = 0.0;
+            final Set<String> distinctDoctors = {};
+            for (final a in filteredAppts) {
+              final status = (a['status'] ?? '').toString().toLowerCase();
+              if (!status.contains('cancel') && !status.contains('reject')) {
+                final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                totalRevenue += amt;
+              }
+              final docName = (a['doctor_name'] ?? a['doctorName'] ?? '').toString();
+              if (docName.isNotEmpty) distinctDoctors.add(docName);
+            }
+
+            final double avgFee = filteredAppts.isNotEmpty ? (totalRevenue / filteredAppts.length) : 0.0;
+
+            final List<Map<String, dynamic>> chartBars = [];
+            if (selectedFilter == 'This Year') {
+              for (int m = 1; m <= 12; m++) {
+                final monthName = DateFormat('MMM').format(DateTime(now.year, m, 1));
+                double mRev = 0.0;
+                for (final a in allAppts) {
+                  final aDate = parseDateSafe(a['created_at'] ?? a['date']);
+                  if (aDate.year == now.year && aDate.month == m) {
+                    final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    mRev += amt;
+                  }
+                }
+                chartBars.add({'label': monthName, 'amount': mRev});
+              }
+            } else if (selectedFilter == 'This Month') {
+              for (int i = 5; i >= 0; i--) {
+                final startDay = now.subtract(Duration(days: (i + 1) * 5));
+                final endDay = now.subtract(Duration(days: i * 5));
+                final label = '${DateFormat('d').format(startDay)}-${DateFormat('d MMM').format(endDay)}';
+                double bRev = 0.0;
+                for (final a in allAppts) {
+                  final aDate = parseDateSafe(a['created_at'] ?? a['date']);
+                  if (aDate.isAfter(startDay) && aDate.isBefore(endDay.add(const Duration(days: 1)))) {
+                    final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    bRev += amt;
+                  }
+                }
+                chartBars.add({'label': label, 'amount': bRev});
+              }
+            } else {
+              for (int i = 6; i >= 0; i--) {
+                final targetDay = now.subtract(Duration(days: i));
+                String dayName;
+                if (i == 0) {
+                  dayName = 'Maanta';
+                } else if (i == 1) {
+                  dayName = 'Shalay';
+                } else if (i == 2) {
+                  dayName = 'Daraad';
+                } else {
+                  dayName = DateFormat('EEE, d MMM').format(targetDay);
+                }
+
+                double dayRev = 0.0;
+                for (final a in allAppts) {
+                  final aDate = parseDateSafe(a['created_at'] ?? a['date']);
+                  if (isSameDate(aDate, targetDay)) {
+                    final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    dayRev += amt;
+                  }
+                }
+                chartBars.add({'label': dayName, 'amount': dayRev, 'isSpecial': i <= 2});
+              }
+            }
+
+            final maxChartAmt = chartBars.fold<double>(0.0, (max, b) => b['amount'] > max ? b['amount'] : max);
+            final double safeMax = maxChartAmt > 0 ? maxChartAmt : 100.0;
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Container(
+                width: 950,
+                constraints: const BoxConstraints(maxHeight: 820),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x20000000),
+                      blurRadius: 30,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(28, 20, 20, 18),
+                      decoration: const BoxDecoration(
+                        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.medical_services_rounded, color: Color(0xFF2563EB), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Dakhliga & Ballamaha Dhaqaatiirta (Doctor Appointments Revenue)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Xisaabi dakhliga maanta, shalay, daraad, toddobaadkan, bishan, iyo sannadkan ee dhaqaatiirta',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _buildTimeFilterPill('Maanta (Today)', 'Today', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Shalay (Yesterday)', 'Yesterday', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Daraad (2 Days Ago)', '2 Days Ago', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Toddobaadkan (7 Days)', 'This Week', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Bishan (30 Days)', 'This Month', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Sannadkan (12 Months)', 'This Year', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Dhammaan (All Time)', 'All Time', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dakhliga Dhaqaatiirta ($selectedFilter)',
+                                    value: '\$${totalRevenue.toStringAsFixed(2)} USD',
+                                    icon: Icons.payments_rounded,
+                                    iconColor: const Color(0xFF2563EB),
+                                    bgColor: const Color(0xFFEFF6FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Tirada Ballamaha',
+                                    value: '${filteredAppts.length} Ballan',
+                                    icon: Icons.calendar_month_rounded,
+                                    iconColor: const Color(0xFF10B981),
+                                    bgColor: const Color(0xFFECFDF5),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dhaqaatiirta La Dalbaday',
+                                    value: '${distinctDoctors.length} Dhaqtar',
+                                    icon: Icons.badge_rounded,
+                                    iconColor: const Color(0xFF8B5CF6),
+                                    bgColor: const Color(0xFFF5F3FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Celceliska Ballankiiba',
+                                    value: '\$${avgFee.toStringAsFixed(2)} USD',
+                                    icon: Icons.trending_up_rounded,
+                                    iconColor: const Color(0xFFEA580C),
+                                    bgColor: const Color(0xFFFFF7ED),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.bar_chart_rounded, color: Color(0xFF2563EB), size: 20),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Muuqaalka Dakhliga Ballamaha (Doctor Booking Revenue Chart)',
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF0F172A),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFDBEAFE),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'Max: \$${maxChartAmt.toStringAsFixed(2)} USD',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: const Color(0xFF1D4ED8),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 20),
+                                  SizedBox(
+                                    height: 180,
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: chartBars.map((bar) {
+                                        final double amt = bar['amount'] as double;
+                                        final String label = bar['label'] as String;
+                                        final bool isSpecial = (bar['isSpecial'] == true);
+                                        final double heightFactor = (amt / safeMax).clamp(0.06, 1.0);
+
+                                        return Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  '\$${amt.toStringAsFixed(amt % 1 == 0 ? 0 : 2)}',
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: amt > 0
+                                                        ? (isSpecial ? const Color(0xFF1D4ED8) : const Color(0xFF2563EB))
+                                                        : const Color(0xFF94A3B8),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Flexible(
+                                                  child: FractionallySizedBox(
+                                                    heightFactor: heightFactor,
+                                                    child: Container(
+                                                      width: double.infinity,
+                                                      decoration: BoxDecoration(
+                                                        gradient: LinearGradient(
+                                                          begin: Alignment.topCenter,
+                                                          end: Alignment.bottomCenter,
+                                                          colors: isSpecial
+                                                              ? (amt > 0
+                                                                  ? [const Color(0xFF3B82F6), const Color(0xFF1D4ED8)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)])
+                                                              : (amt > 0
+                                                                  ? [const Color(0xFF60A5FA), const Color(0xFF2563EB)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)]),
+                                                        ),
+                                                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  label,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: isSpecial ? FontWeight.bold : FontWeight.w500,
+                                                    color: isSpecial ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Text(
+                              'Ballamaha La Qabsaday Muddadan ($selectedFilter) — ${filteredAppts.length} Ballan',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (filteredAppts.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(32),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: Column(
+                                  children: [
+                                    const Icon(Icons.event_busy_rounded, size: 48, color: Color(0xFFCBD5E1)),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Wax ballan dhaqtar ah lagama helin muddada ($selectedFilter).',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: filteredAppts.length,
+                                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
+                                  final a = filteredAppts[index];
+                                  final docName = (a['doctor_name'] ?? a['doctorName'] ?? 'Dhaqtar').toString();
+                                  final docSpec = (a['doctor_specialty'] ?? a['doctorSpecialty'] ?? 'General').toString();
+                                  final patName = (a['patient_name'] ?? a['patientName'] ?? 'Bukaan').toString();
+                                  final rawAmt = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                                  final amount = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                                  final queue = (a['queue_number'] ?? a['queueNumber'] ?? 1).toString();
+                                  final paymentMethod = (a['payment_method'] ?? a['paymentMethod'] ?? 'EVC Plus').toString();
+                                  final createdAtRaw = a['created_at']?.toString() ?? a['date']?.toString();
+                                  String formattedTime = 'Recently';
+                                  if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
+                                    try {
+                                      final dt = DateTime.parse(createdAtRaw).toLocal();
+                                      formattedTime = DateFormat('EEE, d MMM yyyy • hh:mm a').format(dt);
+                                    } catch (_) {}
+                                  }
+
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEFF6FF),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.person_pin_rounded, color: Color(0xFF2563EB), size: 20),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    docName,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 13,
+                                                      color: const Color(0xFF0F172A),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFEEF2FF),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      docSpec,
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: const Color(0xFF4F46E5),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFDCFCE7),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      'Queue #$queue',
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: const Color(0xFF16A34A),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                'Bukaan: $patName • $formattedTime',
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontSize: 11,
+                                                  color: const Color(0xFF64748B),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              '\$${amount.toStringAsFixed(2)} USD',
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: const Color(0xFF2563EB),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              paymentMethod,
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                color: const Color(0xFF64748B),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- INTERACTIVE NURSE HOME CARE REVENUE ANALYTICS MODAL ---
+  void _showNurseRevenueAnalyticsDialog(
+    BuildContext context,
+    AppState appState,
+    List<Map<String, dynamic>> allNurseOrders,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String selectedFilter = 'This Week';
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final now = DateTime.now();
+
+            DateTime parseDateSafe(dynamic raw) {
+              if (raw == null) return DateTime.fromMillisecondsSinceEpoch(0);
+              final str = raw.toString().trim();
+              if (str.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+              final dt = DateTime.tryParse(str);
+              if (dt != null) return dt.toLocal();
+              final intVal = int.tryParse(str);
+              if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal).toLocal();
+              return DateTime.fromMillisecondsSinceEpoch(0);
+            }
+
+            bool isSameDate(DateTime a, DateTime b) {
+              return a.year == b.year && a.month == b.month && a.day == b.day;
+            }
+
+            final yesterday = now.subtract(const Duration(days: 1));
+            final twoDaysAgo = now.subtract(const Duration(days: 2));
+
+            final List<Map<String, dynamic>> filteredOrders = [];
+            for (final n in allNurseOrders) {
+              final nDate = parseDateSafe(n['created_at'] ?? n['date']);
+              bool matches = false;
+
+              if (selectedFilter == 'Today') {
+                matches = isSameDate(nDate, now);
+              } else if (selectedFilter == 'Yesterday') {
+                matches = isSameDate(nDate, yesterday);
+              } else if (selectedFilter == '2 Days Ago') {
+                matches = isSameDate(nDate, twoDaysAgo);
+              } else if (selectedFilter == 'This Week') {
+                matches = nDate.isAfter(now.subtract(const Duration(days: 7)));
+              } else if (selectedFilter == 'This Month') {
+                matches = nDate.isAfter(now.subtract(const Duration(days: 30)));
+              } else if (selectedFilter == 'This Year') {
+                matches = nDate.isAfter(now.subtract(const Duration(days: 365)));
+              } else {
+                matches = true;
+              }
+
+              if (matches) filteredOrders.add(n);
+            }
+
+            double totalRevenue = 0.0;
+            final Set<String> distinctNurses = {};
+            for (final n in filteredOrders) {
+              final status = (n['status'] ?? n['order_status'] ?? '').toString().toLowerCase();
+              if (!status.contains('cancel') && !status.contains('reject')) {
+                final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                totalRevenue += amt;
+              }
+              final nurseName = (n['nurse_name'] ?? n['nurseName'] ?? '').toString();
+              if (nurseName.isNotEmpty) distinctNurses.add(nurseName);
+            }
+
+            final double avgFee = filteredOrders.isNotEmpty ? (totalRevenue / filteredOrders.length) : 0.0;
+
+            final List<Map<String, dynamic>> chartBars = [];
+            if (selectedFilter == 'This Year') {
+              for (int m = 1; m <= 12; m++) {
+                final monthName = DateFormat('MMM').format(DateTime(now.year, m, 1));
+                double mRev = 0.0;
+                for (final n in allNurseOrders) {
+                  final nDate = parseDateSafe(n['created_at'] ?? n['date']);
+                  if (nDate.year == now.year && nDate.month == m) {
+                    final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    mRev += amt;
+                  }
+                }
+                chartBars.add({'label': monthName, 'amount': mRev});
+              }
+            } else if (selectedFilter == 'This Month') {
+              for (int i = 5; i >= 0; i--) {
+                final startDay = now.subtract(Duration(days: (i + 1) * 5));
+                final endDay = now.subtract(Duration(days: i * 5));
+                final label = '${DateFormat('d').format(startDay)}-${DateFormat('d MMM').format(endDay)}';
+                double bRev = 0.0;
+                for (final n in allNurseOrders) {
+                  final nDate = parseDateSafe(n['created_at'] ?? n['date']);
+                  if (nDate.isAfter(startDay) && nDate.isBefore(endDay.add(const Duration(days: 1)))) {
+                    final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    bRev += amt;
+                  }
+                }
+                chartBars.add({'label': label, 'amount': bRev});
+              }
+            } else {
+              for (int i = 6; i >= 0; i--) {
+                final targetDay = now.subtract(Duration(days: i));
+                String dayName;
+                if (i == 0) {
+                  dayName = 'Maanta';
+                } else if (i == 1) {
+                  dayName = 'Shalay';
+                } else if (i == 2) {
+                  dayName = 'Daraad';
+                } else {
+                  dayName = DateFormat('EEE, d MMM').format(targetDay);
+                }
+
+                double dayRev = 0.0;
+                for (final n in allNurseOrders) {
+                  final nDate = parseDateSafe(n['created_at'] ?? n['date']);
+                  if (isSameDate(nDate, targetDay)) {
+                    final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    dayRev += amt;
+                  }
+                }
+                chartBars.add({'label': dayName, 'amount': dayRev, 'isSpecial': i <= 2});
+              }
+            }
+
+            final maxChartAmt = chartBars.fold<double>(0.0, (max, b) => b['amount'] > max ? b['amount'] : max);
+            final double safeMax = maxChartAmt > 0 ? maxChartAmt : 100.0;
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Container(
+                width: 950,
+                constraints: const BoxConstraints(maxHeight: 820),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x20000000),
+                      blurRadius: 30,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(28, 20, 20, 18),
+                      decoration: const BoxDecoration(
+                        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD1FAE5),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.health_and_safety_rounded, color: Color(0xFF059669), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Dakhliga Adeegga Kalkaalisada Guriga (Nurse Home Care Revenue)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Xisaabi dakhliga maanta, shalay, daraad, toddobaadkan, bishan, iyo sannadkan ee kalkaalisada',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _buildTimeFilterPill('Maanta (Today)', 'Today', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Shalay (Yesterday)', 'Yesterday', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Daraad (2 Days Ago)', '2 Days Ago', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Toddobaadkan (7 Days)', 'This Week', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Bishan (30 Days)', 'This Month', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Sannadkan (12 Months)', 'This Year', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Dhammaan (All Time)', 'All Time', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dakhliga Kalkaalisada ($selectedFilter)',
+                                    value: '\$${totalRevenue.toStringAsFixed(2)} USD',
+                                    icon: Icons.payments_rounded,
+                                    iconColor: const Color(0xFF059669),
+                                    bgColor: const Color(0xFFD1FAE5),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Tirada Dalabaadka',
+                                    value: '${filteredOrders.length} Dalab',
+                                    icon: Icons.home_work_rounded,
+                                    iconColor: const Color(0xFF2563EB),
+                                    bgColor: const Color(0xFFEFF6FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Kalkaaliyayaasha La Diray',
+                                    value: '${distinctNurses.length} Kalkaaliso',
+                                    icon: Icons.people_alt_rounded,
+                                    iconColor: const Color(0xFF8B5CF6),
+                                    bgColor: const Color(0xFFF5F3FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Celceliska Dalabkiiba',
+                                    value: '\$${avgFee.toStringAsFixed(2)} USD',
+                                    icon: Icons.trending_up_rounded,
+                                    iconColor: const Color(0xFFEA580C),
+                                    bgColor: const Color(0xFFFFF7ED),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.bar_chart_rounded, color: Color(0xFF059669), size: 20),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Muuqaalka Dakhliga Kalkaalisada (Nurse Dispatch Revenue Chart)',
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF0F172A),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFDCFCE7),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'Max: \$${maxChartAmt.toStringAsFixed(2)} USD',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: const Color(0xFF15803D),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 20),
+                                  SizedBox(
+                                    height: 180,
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: chartBars.map((bar) {
+                                        final double amt = bar['amount'] as double;
+                                        final String label = bar['label'] as String;
+                                        final bool isSpecial = (bar['isSpecial'] == true);
+                                        final double heightFactor = (amt / safeMax).clamp(0.06, 1.0);
+
+                                        return Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  '\$${amt.toStringAsFixed(amt % 1 == 0 ? 0 : 2)}',
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: amt > 0
+                                                        ? (isSpecial ? const Color(0xFF059669) : const Color(0xFF10B981))
+                                                        : const Color(0xFF94A3B8),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Flexible(
+                                                  child: FractionallySizedBox(
+                                                    heightFactor: heightFactor,
+                                                    child: Container(
+                                                      width: double.infinity,
+                                                      decoration: BoxDecoration(
+                                                        gradient: LinearGradient(
+                                                          begin: Alignment.topCenter,
+                                                          end: Alignment.bottomCenter,
+                                                          colors: isSpecial
+                                                              ? (amt > 0
+                                                                  ? [const Color(0xFF059669), const Color(0xFF047857)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)])
+                                                              : (amt > 0
+                                                                  ? [const Color(0xFF10B981), const Color(0xFF059669)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)]),
+                                                        ),
+                                                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  label,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: isSpecial ? FontWeight.bold : FontWeight.w500,
+                                                    color: isSpecial ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Text(
+                              'Dalabaadka Kalkaalisada ee Muddadan ($selectedFilter) — ${filteredOrders.length} Dalab',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (filteredOrders.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(32),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: Column(
+                                  children: [
+                                    const Icon(Icons.home_repair_service_rounded, size: 48, color: Color(0xFFCBD5E1)),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Wax dalab kalkaaliso ah lagama helin muddada ($selectedFilter).',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: filteredOrders.length,
+                                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
+                                  final n = filteredOrders[index];
+                                  final nurseName = (n['nurse_name'] ?? n['nurseName'] ?? 'Kalkaaliso').toString();
+                                  final patName = (n['patient_name'] ?? n['patientName'] ?? 'Bukaan').toString();
+                                  final notes = (n['service_notes'] ?? n['notes'] ?? 'Home Care Service').toString();
+                                  final rawAmt = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                                  final amount = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                                  final paymentMethod = (n['payment_method'] ?? 'EVC Plus').toString();
+                                  final createdAtRaw = n['created_at']?.toString() ?? n['date']?.toString();
+                                  String formattedTime = 'Recently';
+                                  if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
+                                    try {
+                                      final dt = DateTime.parse(createdAtRaw).toLocal();
+                                      formattedTime = DateFormat('EEE, d MMM yyyy • hh:mm a').format(dt);
+                                    } catch (_) {}
+                                  }
+
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFD1FAE5),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.health_and_safety_rounded, color: Color(0xFF059669), size: 20),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    'Kalkaaliso: $nurseName',
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 13,
+                                                      color: const Color(0xFF0F172A),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFDCFCE7),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      'Home Care',
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: const Color(0xFF16A34A),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                'Bukaan: $patName ($notes) • $formattedTime',
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontSize: 11,
+                                                  color: const Color(0xFF64748B),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              '\$${amount.toStringAsFixed(2)} USD',
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: const Color(0xFF059669),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              paymentMethod,
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                color: const Color(0xFF64748B),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- INTERACTIVE COMBINED TOTAL HOSPITAL REVENUE ANALYTICS MODAL ---
+  void _showCombinedRevenueAnalyticsDialog(
+    BuildContext context,
+    AppState appState,
+    List<Map<String, dynamic>> orders,
+    List<Map<String, dynamic>> appts,
+    List<Map<String, dynamic>> nurseOrders,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String selectedFilter = 'This Week';
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final now = DateTime.now();
+
+            DateTime parseDateSafe(dynamic raw) {
+              if (raw == null) return DateTime.fromMillisecondsSinceEpoch(0);
+              final str = raw.toString().trim();
+              if (str.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+              final dt = DateTime.tryParse(str);
+              if (dt != null) return dt.toLocal();
+              final intVal = int.tryParse(str);
+              if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal).toLocal();
+              return DateTime.fromMillisecondsSinceEpoch(0);
+            }
+
+            bool isSameDate(DateTime a, DateTime b) {
+              return a.year == b.year && a.month == b.month && a.day == b.day;
+            }
+
+            final yesterday = now.subtract(const Duration(days: 1));
+            final twoDaysAgo = now.subtract(const Duration(days: 2));
+
+            bool matchesFilter(DateTime itemDate) {
+              if (selectedFilter == 'Today') return isSameDate(itemDate, now);
+              if (selectedFilter == 'Yesterday') return isSameDate(itemDate, yesterday);
+              if (selectedFilter == '2 Days Ago') return isSameDate(itemDate, twoDaysAgo);
+              if (selectedFilter == 'This Week') return itemDate.isAfter(now.subtract(const Duration(days: 7)));
+              if (selectedFilter == 'This Month') return itemDate.isAfter(now.subtract(const Duration(days: 30)));
+              if (selectedFilter == 'This Year') return itemDate.isAfter(now.subtract(const Duration(days: 365)));
+              return true;
+            }
+
+            // Pharmacy
+            double pRev = 0.0;
+            int pCount = 0;
+            for (final o in orders) {
+              final d = parseDateSafe(o['created_at'] ?? o['date']);
+              if (matchesFilter(d)) {
+                pCount++;
+                final s = (o['status'] ?? '').toString().toLowerCase();
+                if (!s.contains('cancel')) {
+                  final raw = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                  pRev += (raw as num?)?.toDouble() ?? (double.tryParse(raw?.toString() ?? '') ?? 0.0);
+                }
+              }
+            }
+
+            // Doctors
+            double dRev = 0.0;
+            int dCount = 0;
+            for (final a in appts) {
+              final d = parseDateSafe(a['created_at'] ?? a['date']);
+              if (matchesFilter(d)) {
+                dCount++;
+                final s = (a['status'] ?? '').toString().toLowerCase();
+                if (!s.contains('cancel') && !s.contains('reject')) {
+                  final raw = a['amount'] ?? a['consultation_fee'] ?? a['price'] ?? a['fee'];
+                  dRev += (raw as num?)?.toDouble() ?? (double.tryParse(raw?.toString() ?? '') ?? 0.0);
+                }
+              }
+            }
+
+            // Nurses
+            double nRev = 0.0;
+            int nCount = 0;
+            for (final n in nurseOrders) {
+              final d = parseDateSafe(n['created_at'] ?? n['date']);
+              if (matchesFilter(d)) {
+                nCount++;
+                final s = (n['status'] ?? n['order_status'] ?? '').toString().toLowerCase();
+                if (!s.contains('cancel') && !s.contains('reject')) {
+                  final raw = n['amount'] ?? n['total_amount'] ?? n['price'] ?? n['fee'];
+                  nRev += (raw as num?)?.toDouble() ?? (double.tryParse(raw?.toString() ?? '') ?? 0.0);
+                }
+              }
+            }
+
+            final double grandTotal = pRev + dRev + nRev;
+            final int grandOrders = pCount + dCount + nCount;
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Container(
+                width: 950,
+                constraints: const BoxConstraints(maxHeight: 820),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x20000000),
+                      blurRadius: 30,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(28, 20, 20, 18),
+                      decoration: const BoxDecoration(
+                        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3E8FF),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.account_balance_wallet_rounded, color: Color(0xFF7C3AED), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Wadarta Dakhliga Guud ee Isbitaalka (Total Hospital Revenue)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Isku darka dakhliga Dawooyinka, Dhaqaatiirta, iyo Kalkaalisada ee Isbitaalka Nasiib',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _buildTimeFilterPill('Maanta (Today)', 'Today', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Shalay (Yesterday)', 'Yesterday', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Daraad (2 Days Ago)', '2 Days Ago', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Toddobaadkan (7 Days)', 'This Week', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Bishan (30 Days)', 'This Month', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Sannadkan (12 Months)', 'This Year', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Dhammaan (All Time)', 'All Time', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dakhliga Dawooyinka',
+                                    value: '\$${pRev.toStringAsFixed(2)} USD',
+                                    icon: Icons.medication_rounded,
+                                    iconColor: const Color(0xFF10B981),
+                                    bgColor: const Color(0xFFECFDF5),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dakhliga Dhaqaatiirta',
+                                    value: '\$${dRev.toStringAsFixed(2)} USD',
+                                    icon: Icons.medical_services_rounded,
+                                    iconColor: const Color(0xFF2563EB),
+                                    bgColor: const Color(0xFFEFF6FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dakhliga Kalkaalisada',
+                                    value: '\$${nRev.toStringAsFixed(2)} USD',
+                                    icon: Icons.health_and_safety_rounded,
+                                    iconColor: const Color(0xFF059669),
+                                    bgColor: const Color(0xFFD1FAE5),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Wadarta Guud ($selectedFilter)',
+                                    value: '\$${grandTotal.toStringAsFixed(2)} USD',
+                                    icon: Icons.account_balance_wallet_rounded,
+                                    iconColor: const Color(0xFF7C3AED),
+                                    bgColor: const Color(0xFFF3E8FF),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            Container(
+                              padding: const EdgeInsets.all(24),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFFF5F3FF), Color(0xFFEFF6FF)],
+                                ),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFFDDD6FE)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF7C3AED),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: const Icon(Icons.pie_chart_rounded, color: Colors.white, size: 28),
+                                  ),
+                                  const SizedBox(width: 18),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Guud ahaan Isbitaalka Nasiib ($selectedFilter)',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: const Color(0xFF0F172A),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Wadarta dhammaan adeegyada la qabtay waa $grandOrders (Dawooyin: $pCount, Ballamo Dhaqtar: $dCount, Kalkaalisada Guriga: $nCount)',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 12,
+                                            color: const Color(0xFF64748B),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${grandTotal.toStringAsFixed(2)} USD',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w900,
+                                      color: const Color(0xFF7C3AED),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),

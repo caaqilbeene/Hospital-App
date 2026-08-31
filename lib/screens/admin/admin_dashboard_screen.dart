@@ -4990,49 +4990,66 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildPatientsOverviewTableCard(AppState appState) {
-    final List<Map<String, dynamic>> registeredUsers = [];
-    final Set<String> seenIds = {};
+    final client = SupabaseService.instance.client;
+    final bool canStream = client != null && SupabaseService.instance.isInitialized;
 
-    for (final p in appState.dbPatients) {
-      final String id = (p['id'] ?? p['user_id'] ?? '').toString();
-      final String pName = (p['full_name'] ?? p['name'] ?? p['patient_name'] ?? '').toString().trim();
-      final String pPhone = (p['phone_number'] ?? p['phone'] ?? '').toString().trim();
-      final String pEmail = (p['email'] ?? '').toString().trim();
-      final String pAvatar = (p['avatar_url'] ?? p['patient_image'] ?? p['image_url'] ?? '').toString().trim();
-      final String rawCreatedAt = (p['created_at'] ?? '').toString();
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: canStream
+          ? client.from('patients').stream(primaryKey: ['id']).order('created_at', ascending: false)
+          : const Stream.empty(),
+      builder: (context, snap) {
+        final List<Map<String, dynamic>> rawPatients = (snap.hasData && snap.data != null && snap.data!.isNotEmpty)
+            ? snap.data!
+            : appState.dbPatients;
 
-      final dedupeKey = id.isNotEmpty ? id : '${pName}_$pPhone';
-      if (seenIds.contains(dedupeKey)) continue;
-      seenIds.add(dedupeKey);
+        final List<Map<String, dynamic>> registeredUsers = [];
+        final Set<String> seenIds = {};
 
-      String joinedDate = 'Recent';
-      if (rawCreatedAt.isNotEmpty) {
-        final dt = DateTime.tryParse(rawCreatedAt);
-        if (dt != null) {
-          joinedDate = DateFormat('dd MMM yyyy').format(dt.toLocal());
+        for (final p in rawPatients) {
+          final String id = (p['id'] ?? p['user_id'] ?? '').toString();
+          final String pName = (p['full_name'] ?? p['name'] ?? p['patient_name'] ?? '').toString().trim();
+          final String pPhone = (p['phone_number'] ?? p['phone'] ?? '').toString().trim();
+          final String pEmail = (p['email'] ?? '').toString().trim();
+          final String pAvatar = (p['avatar_url'] ?? p['patient_image'] ?? p['image_url'] ?? '').toString().trim();
+          final String rawCreatedAt = (p['created_at'] ?? p['createdAt'] ?? p['registration_date'] ?? p['joined_date'] ?? p['date'] ?? p['updated_at'] ?? '').toString().trim();
+
+          final dedupeKey = id.isNotEmpty ? id : '${pName}_$pPhone';
+          if (seenIds.contains(dedupeKey)) continue;
+          seenIds.add(dedupeKey);
+
+          String joinedDate = DateFormat('dd MMM yyyy').format(DateTime.now());
+          if (rawCreatedAt.isNotEmpty && rawCreatedAt.toLowerCase() != 'null') {
+            final dt = DateTime.tryParse(rawCreatedAt);
+            if (dt != null) {
+              joinedDate = DateFormat('dd MMM yyyy').format(dt.toLocal());
+            } else {
+              final intVal = int.tryParse(rawCreatedAt);
+              if (intVal != null) {
+                joinedDate = DateFormat('dd MMM yyyy').format(DateTime.fromMillisecondsSinceEpoch(intVal).toLocal());
+              }
+            }
+          }
+
+          registeredUsers.add({
+            'id': id,
+            'name': pName.isNotEmpty ? pName : 'Registered User',
+            'email': pEmail.isNotEmpty ? pEmail : 'N/A',
+            'phone': pPhone.isNotEmpty ? pPhone : 'N/A',
+            'joined_date': joinedDate,
+            'avatar': pAvatar,
+            'status': 'Active',
+          });
         }
-      }
 
-      registeredUsers.add({
-        'id': id,
-        'name': pName.isNotEmpty ? pName : 'Registered User',
-        'email': pEmail.isNotEmpty ? pEmail : 'N/A',
-        'phone': pPhone.isNotEmpty ? pPhone : 'N/A',
-        'joined_date': joinedDate,
-        'avatar': pAvatar,
-        'status': 'Active',
-      });
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      height: 380,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
+        return Container(
+          padding: const EdgeInsets.all(24),
+          height: 380,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -5284,6 +5301,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ],
       ),
+    );
+      },
     );
   }
 

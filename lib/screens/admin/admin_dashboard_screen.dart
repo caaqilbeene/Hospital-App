@@ -1981,31 +1981,34 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               title: 'Dalabaadka Maanta (Dawooyinka)',
               value: '$todaysOrdersCount',
               change: '↗ Live',
-              subtext: 'Dalab dawo maanta la helay',
+              subtext: 'Dalab dawo maanta la helay (Riix)',
               icon: Icons.shopping_bag_outlined,
               iconColor: const Color(0xFF6366F1),
               bgColor: const Color(0xFFEEF2FF),
+              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
             );
 
             final card2 = _buildCarePlusStatCard(
               title: 'Dakhliga Dawooyinka (Maanta)',
               value: '\$$formattedRevenue USD',
               change: '↗ Live',
-              subtext: 'Dakhliga iibka dawooyinka',
+              subtext: 'Dakhliga iibka dawooyinka (Riix)',
               icon: Icons.attach_money_rounded,
               iconColor: const Color(0xFF10B981),
               bgColor: const Color(0xFFECFDF5),
               showSparkline: true,
+              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
             );
 
             final card3 = _buildCarePlusStatCard(
               title: 'Dalabaadka Guud (Dawooyinka)',
               value: '$totalOrdersCount',
               change: '↗ Live',
-              subtext: 'Wadarta dalabaadka dawooyinka',
+              subtext: 'Wadarta dalabaadka dawooyinka (Riix)',
               icon: Icons.assignment_rounded,
               iconColor: const Color(0xFF8B5CF6),
               bgColor: const Color(0xFFF5F3FF),
+              onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
             );
 
             final card4 = StreamBuilder<List<Map<String, dynamic>>>(
@@ -2087,8 +2090,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required Color iconColor,
     required Color bgColor,
     bool showSparkline = false,
+    VoidCallback? onTap,
   }) {
-    return Container(
+    final cardContent = Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -2171,11 +2175,713 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            subtext,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 10,
-              color: const Color(0xFF94A3B8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  subtext,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    color: const Color(0xFF94A3B8),
+                  ),
+                ),
+              ),
+              if (onTap != null)
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 10,
+                  color: Color(0xFF94A3B8),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (onTap != null) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: cardContent,
+        ),
+      );
+    }
+
+    return cardContent;
+  }
+
+  // --- INTERACTIVE PHARMACY REVENUE & SALES ANALYTICS MODAL ---
+  void _showPharmacyRevenueAnalyticsDialog(
+    BuildContext context,
+    AppState appState,
+    List<Map<String, dynamic>> allOrders,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        String selectedFilter = 'This Week'; // 'Today', 'Yesterday', '2 Days Ago', 'This Week', 'This Month', 'This Year', 'All Time'
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final now = DateTime.now();
+
+            DateTime parseDateSafe(dynamic raw) {
+              if (raw == null) return DateTime.fromMillisecondsSinceEpoch(0);
+              final str = raw.toString().trim();
+              if (str.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+              final dt = DateTime.tryParse(str);
+              if (dt != null) return dt.toLocal();
+              final intVal = int.tryParse(str);
+              if (intVal != null) return DateTime.fromMillisecondsSinceEpoch(intVal).toLocal();
+              return DateTime.fromMillisecondsSinceEpoch(0);
+            }
+
+            bool isSameDate(DateTime a, DateTime b) {
+              return a.year == b.year && a.month == b.month && a.day == b.day;
+            }
+
+            final yesterday = now.subtract(const Duration(days: 1));
+            final twoDaysAgo = now.subtract(const Duration(days: 2));
+
+            // Filter matching orders
+            final List<Map<String, dynamic>> filteredOrders = [];
+            for (final o in allOrders) {
+              final oDate = parseDateSafe(o['created_at'] ?? o['date']);
+              bool matches = false;
+
+              if (selectedFilter == 'Today') {
+                matches = isSameDate(oDate, now);
+              } else if (selectedFilter == 'Yesterday') {
+                matches = isSameDate(oDate, yesterday);
+              } else if (selectedFilter == '2 Days Ago') {
+                matches = isSameDate(oDate, twoDaysAgo);
+              } else if (selectedFilter == 'This Week') {
+                matches = oDate.isAfter(now.subtract(const Duration(days: 7)));
+              } else if (selectedFilter == 'This Month') {
+                matches = oDate.isAfter(now.subtract(const Duration(days: 30)));
+              } else if (selectedFilter == 'This Year') {
+                matches = oDate.isAfter(now.subtract(const Duration(days: 365)));
+              } else {
+                matches = true; // All Time
+              }
+
+              if (matches) filteredOrders.add(o);
+            }
+
+            // Calculate total revenue, order count, avg value
+            double totalRevenue = 0.0;
+            int totalItemsCount = 0;
+            for (final o in filteredOrders) {
+              final status = (o['status'] ?? '').toString().toLowerCase();
+              if (!status.contains('cancel')) {
+                final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                totalRevenue += amt;
+              }
+              final items = o['items'];
+              if (items is List) {
+                totalItemsCount += items.length;
+              } else {
+                totalItemsCount += 1;
+              }
+            }
+
+            final double avgOrderValue = filteredOrders.isNotEmpty ? (totalRevenue / filteredOrders.length) : 0.0;
+
+            // Generate daily chart data for the last 7 days (or 30 days / 12 months)
+            final List<Map<String, dynamic>> chartBars = [];
+            if (selectedFilter == 'This Year') {
+              // 12 months
+              for (int m = 1; m <= 12; m++) {
+                final monthName = DateFormat('MMM').format(DateTime(now.year, m, 1));
+                double mRev = 0.0;
+                for (final o in allOrders) {
+                  final oDate = parseDateSafe(o['created_at'] ?? o['date']);
+                  if (oDate.year == now.year && oDate.month == m) {
+                    final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    mRev += amt;
+                  }
+                }
+                chartBars.add({'label': monthName, 'amount': mRev});
+              }
+            } else if (selectedFilter == 'This Month') {
+              // Last 4 weeks / 30 days in 6 buckets
+              for (int i = 5; i >= 0; i--) {
+                final startDay = now.subtract(Duration(days: (i + 1) * 5));
+                final endDay = now.subtract(Duration(days: i * 5));
+                final label = '${DateFormat('d').format(startDay)}-${DateFormat('d MMM').format(endDay)}';
+                double bRev = 0.0;
+                for (final o in allOrders) {
+                  final oDate = parseDateSafe(o['created_at'] ?? o['date']);
+                  if (oDate.isAfter(startDay) && oDate.isBefore(endDay.add(const Duration(days: 1)))) {
+                    final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    bRev += amt;
+                  }
+                }
+                chartBars.add({'label': label, 'amount': bRev});
+              }
+            } else {
+              // Last 7 days including Daraad, Shalay, Maanta
+              for (int i = 6; i >= 0; i--) {
+                final targetDay = now.subtract(Duration(days: i));
+                String dayName;
+                if (i == 0) {
+                  dayName = 'Maanta';
+                } else if (i == 1) {
+                  dayName = 'Shalay';
+                } else if (i == 2) {
+                  dayName = 'Daraad';
+                } else {
+                  dayName = DateFormat('EEE, d MMM').format(targetDay);
+                }
+
+                double dayRev = 0.0;
+                for (final o in allOrders) {
+                  final oDate = parseDateSafe(o['created_at'] ?? o['date']);
+                  if (isSameDate(oDate, targetDay)) {
+                    final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                    final amt = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                    dayRev += amt;
+                  }
+                }
+                chartBars.add({'label': dayName, 'amount': dayRev, 'isSpecial': i <= 2});
+              }
+            }
+
+            final maxChartAmt = chartBars.fold<double>(0.0, (max, b) => b['amount'] > max ? b['amount'] : max);
+            final double safeMax = maxChartAmt > 0 ? maxChartAmt : 100.0;
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: Container(
+                width: 950,
+                constraints: const BoxConstraints(maxHeight: 820),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x20000000),
+                      blurRadius: 30,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    // Modal Header
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(28, 20, 20, 18),
+                      decoration: const BoxDecoration(
+                        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFECFDF5),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.analytics_rounded, color: Color(0xFF10B981), size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Dakhliga & Iibka Dawooyinka (Pharmacy Revenue Analytics)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Xisaabi dakhliga maanta, shalay, daraad, toddobaadkan, bishan, iyo sannadkan',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 1. Time Filter Tabs
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _buildTimeFilterPill('Maanta (Today)', 'Today', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Shalay (Yesterday)', 'Yesterday', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Daraad (2 Days Ago)', '2 Days Ago', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Toddobaadkan (7 Days)', 'This Week', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Bishan (30 Days)', 'This Month', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Sannadkan (12 Months)', 'This Year', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                  const SizedBox(width: 8),
+                                  _buildTimeFilterPill('Dhammaan (All Time)', 'All Time', selectedFilter, (val) => setModalState(() => selectedFilter = val)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            // 2. Summary KPI Cards (4 Cards)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Wadarta Dakhliga ($selectedFilter)',
+                                    value: '\$${totalRevenue.toStringAsFixed(2)} USD',
+                                    icon: Icons.payments_rounded,
+                                    iconColor: const Color(0xFF10B981),
+                                    bgColor: const Color(0xFFECFDF5),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Tirada Dalabaadka',
+                                    value: '${filteredOrders.length} Dalab',
+                                    icon: Icons.shopping_cart_rounded,
+                                    iconColor: const Color(0xFF2563EB),
+                                    bgColor: const Color(0xFFEFF6FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Celceliska Dalabkiiba',
+                                    value: '\$${avgOrderValue.toStringAsFixed(2)} USD',
+                                    icon: Icons.trending_up_rounded,
+                                    iconColor: const Color(0xFF8B5CF6),
+                                    bgColor: const Color(0xFFF5F3FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: _buildRevenueMetricBox(
+                                    title: 'Dawooyinka La Gaday',
+                                    value: '$totalItemsCount Xabbo/Qasacad',
+                                    icon: Icons.medication_rounded,
+                                    iconColor: const Color(0xFFEA580C),
+                                    bgColor: const Color(0xFFFFF7ED),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+
+                            // 3. Visual Interactive Chart Container
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.bar_chart_rounded, color: Color(0xFF10B981), size: 20),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Muuqaalka Dakhliga Maalinlaha & Muddada (Daily Revenue Chart)',
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF0F172A),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFDCFCE7),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'Max: \$${maxChartAmt.toStringAsFixed(2)} USD',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: const Color(0xFF15803D),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 20),
+
+                                  // Bar Chart Visualization
+                                  SizedBox(
+                                    height: 180,
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: chartBars.map((bar) {
+                                        final double amt = bar['amount'] as double;
+                                        final String label = bar['label'] as String;
+                                        final bool isSpecial = (bar['isSpecial'] == true);
+                                        final double heightFactor = (amt / safeMax).clamp(0.06, 1.0);
+
+                                        return Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.end,
+                                              children: [
+                                                // Dollar label on top of bar
+                                                Text(
+                                                  '\$${amt.toStringAsFixed(amt % 1 == 0 ? 0 : 2)}',
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: amt > 0
+                                                        ? (isSpecial ? const Color(0xFF059669) : const Color(0xFF2563EB))
+                                                        : const Color(0xFF94A3B8),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                // Bar body
+                                                Flexible(
+                                                  child: FractionallySizedBox(
+                                                    heightFactor: heightFactor,
+                                                    child: Container(
+                                                      width: double.infinity,
+                                                      decoration: BoxDecoration(
+                                                        gradient: LinearGradient(
+                                                          begin: Alignment.topCenter,
+                                                          end: Alignment.bottomCenter,
+                                                          colors: isSpecial
+                                                              ? (amt > 0
+                                                                  ? [const Color(0xFF10B981), const Color(0xFF059669)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)])
+                                                              : (amt > 0
+                                                                  ? [const Color(0xFF3B82F6), const Color(0xFF1D4ED8)]
+                                                                  : [const Color(0xFFE2E8F0), const Color(0xFFCBD5E1)]),
+                                                        ),
+                                                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                                        boxShadow: [
+                                                          if (amt > 0)
+                                                            BoxShadow(
+                                                              color: (isSpecial ? const Color(0xFF10B981) : const Color(0xFF3B82F6)).withOpacity(0.3),
+                                                              blurRadius: 6,
+                                                              offset: const Offset(0, 2),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                // X-Axis Label
+                                                Text(
+                                                  label,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    fontWeight: isSpecial ? FontWeight.bold : FontWeight.w500,
+                                                    color: isSpecial ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+
+                            // 4. Detailed Orders Table for this Period
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Dalabaadka La Qabtay Muddadan ($selectedFilter) — ${filteredOrders.length} Dalab',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+
+                            if (filteredOrders.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(32),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: Column(
+                                  children: [
+                                    const Icon(Icons.inbox_outlined, size: 48, color: Color(0xFFCBD5E1)),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Wax dalab dawo ah lagama helin muddada ($selectedFilter).',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: filteredOrders.length,
+                                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
+                                  final o = filteredOrders[index];
+                                  final orderId = (o['id'] ?? o['order_id'] ?? '').toString();
+                                  final customerName = (o['patient_name'] ?? o['customer_name'] ?? o['user_name'] ?? o['full_name'] ?? 'Bukaan').toString();
+                                  final phone = (o['patient_phone'] ?? o['phone'] ?? '').toString();
+                                  final rawAmt = o['total_amount'] ?? o['total'] ?? o['amount'] ?? o['price'];
+                                  final amount = (rawAmt as num?)?.toDouble() ?? (double.tryParse(rawAmt?.toString() ?? '') ?? 0.0);
+                                  final paymentMethod = (o['payment_method'] ?? 'EVC Plus').toString();
+                                  final createdAtRaw = o['created_at']?.toString() ?? o['date']?.toString();
+                                  String formattedTime = 'Recently';
+                                  if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
+                                    try {
+                                      final dt = DateTime.parse(createdAtRaw).toLocal();
+                                      formattedTime = DateFormat('EEE, d MMM yyyy • hh:mm a').format(dt);
+                                    } catch (_) {}
+                                  }
+
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEFF6FF),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.receipt_long_rounded, color: Color(0xFF2563EB), size: 18),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    customerName,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 13,
+                                                      color: const Color(0xFF0F172A),
+                                                    ),
+                                                  ),
+                                                  if (phone.isNotEmpty) ...[
+                                                    const SizedBox(width: 8),
+                                                    Text(
+                                                      '($phone)',
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        fontSize: 12,
+                                                        color: const Color(0xFF64748B),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                'Order #$orderId • $formattedTime',
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontSize: 11,
+                                                  color: const Color(0xFF94A3B8),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              '\$${amount.toStringAsFixed(2)} USD',
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: const Color(0xFF10B981),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              paymentMethod,
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                color: const Color(0xFF64748B),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildTimeFilterPill(
+    String label,
+    String key,
+    String selectedKey,
+    Function(String) onSelect,
+  ) {
+    final bool isSelected = key == selectedKey;
+    return InkWell(
+      onTap: () => onSelect(key),
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF10B981) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF10B981) : const Color(0xFFE2E8F0),
+          ),
+          boxShadow: [
+            if (isSelected)
+              BoxShadow(
+                color: const Color(0xFF10B981).withOpacity(0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+            color: isSelected ? Colors.white : const Color(0xFF475569),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRevenueMetricBox({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color iconColor,
+    required Color bgColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x04000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF64748B),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF0F172A),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
         ],
@@ -2183,139 +2889,192 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // --- APPOINTMENTS OVERVIEW LINE CHART CARD (Dynamic from Supabase) ---
+  // --- APPOINTMENTS & PHARMACY REVENUE OVERVIEW LINE CHART CARD (Dynamic from Supabase) ---
   Widget _buildAppointmentsOverviewChartCard(AppState appState) {
     final now = DateTime.now();
     final days = List.generate(7, (i) => now.subtract(Duration(days: 6 - i)));
     final dayLabels = days.map((d) => DateFormat('d MMM').format(d)).toList();
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      height: 380,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final client = SupabaseService.instance.client;
+    final bool canStream = client != null && SupabaseService.instance.isInitialized;
+
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: canStream
+          ? client.from('orders').stream(primaryKey: ['id']).order('created_at', ascending: false)
+          : const Stream.empty(),
+      builder: (context, snapshot) {
+        final List<Map<String, dynamic>> orders = (snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty)
+            ? snapshot.data!
+            : appState.orders;
+
+        return Container(
+          padding: const EdgeInsets.all(24),
+          height: 380,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Overview Statistics',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF0F172A),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 10,
-                        height: 3,
-                        color: const Color(0xFF2563EB),
+                      Row(
+                        children: [
+                          Text(
+                            'Overview Statistics',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFECFDF5),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: const Color(0xFFA7F3D0)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.analytics_rounded, size: 12, color: Color(0xFF059669)),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Dakhliga & Chart',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF059669),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Registered Patients',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          color: const Color(0xFF64748B),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Container(
-                        width: 10,
-                        height: 3,
-                        color: const Color(0xFF10B981),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Active Users',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          color: const Color(0xFF64748B),
-                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 3,
+                            color: const Color(0xFF2563EB),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Registered Patients',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: const Color(0xFF64748B),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Container(
+                            width: 10,
+                            height: 3,
+                            color: const Color(0xFF10B981),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Pharmacy Revenue (Live)',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      'This Week',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF475569),
+                  InkWell(
+                    onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            'This Week (Chart)',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF475569),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(
+                            Icons.tune_rounded,
+                            color: Color(0xFF64748B),
+                            size: 16,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: Color(0xFF64748B),
-                      size: 16,
-                    ),
-                  ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Expanded(
+                child: InkWell(
+                  onTap: () => _showPharmacyRevenueAnalyticsDialog(context, appState, orders),
+                  child: Stack(
+                    children: [
+                      // Horizontal Grid lines
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: List.generate(
+                          5,
+                          (index) =>
+                              const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        ),
+                      ),
+                      // Custom Painted Graph Curves
+                      Positioned.fill(
+                        child: CustomPaint(painter: CarePlusLineChartPainter()),
+                      ),
+                    ],
+                  ),
                 ),
+              ),
+              const SizedBox(height: 12),
+              // Dynamic X-Axis Day Labels
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: dayLabels.map((day) {
+                  return Text(
+                    day,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      color: const Color(0xFF94A3B8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  );
+                }).toList(),
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Expanded(
-            child: Stack(
-              children: [
-                // Horizontal Grid lines
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: List.generate(
-                    5,
-                    (index) =>
-                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                  ),
-                ),
-                // Custom Painted Graph Curves
-                Positioned.fill(
-                  child: CustomPaint(painter: CarePlusLineChartPainter()),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Dynamic X-Axis Day Labels
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: dayLabels.map((day) {
-              return Text(
-                day,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
-                  color: const Color(0xFF94A3B8),
-                  fontWeight: FontWeight.w500,
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

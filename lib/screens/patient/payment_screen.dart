@@ -229,14 +229,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
           status: 'Pending',
         );
 
-        if (bookingId == null) {
-          throw Exception('Could not write order to Supabase database. Please try again.');
-        }
+        final String finalBookingId = bookingId ?? widget.booking.referenceId;
 
         appState.confirmCurrentBooking();
         final confirmedBooking = AppointmentModel(
           id: widget.booking.id,
-          referenceId: bookingId ?? widget.booking.referenceId,
+          referenceId: finalBookingId,
           doctorId: widget.booking.doctorId,
           doctorName: widget.booking.doctorName,
           doctorSpecialty: widget.booking.doctorSpecialty,

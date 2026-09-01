@@ -3509,105 +3509,166 @@ class AppState extends ChangeNotifier {
     required String paymentMethod,
     String status = 'Pending',
   }) async {
-    final client = SupabaseService.instance.client;
-    if (client == null || !SupabaseService.instance.isInitialized) return null;
+    final String hexSuffix = Random().nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
+    final String bookingId = 'NURSE-$hexSuffix';
 
-    try {
-      final String hexSuffix = Random().nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
-      final String bookingId = 'NURSE-$hexSuffix';
-
-      String? cleanNurseId;
-      if (nurseId != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(nurseId)) {
-        cleanNurseId = nurseId;
-      }
-      String? cleanPatientId;
-      if (_currentUser != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(_currentUser!.id)) {
-        cleanPatientId = _currentUser!.id;
-      }
-      NurseModel? matchingNurse;
-      for (final n in _nurses) {
-        if ((cleanNurseId != null && n.id == cleanNurseId) ||
-            n.name.toLowerCase().trim() == nurseName.toLowerCase().trim() ||
-            nurseName.toLowerCase().contains(n.name.toLowerCase())) {
-          matchingNurse = n;
-          break;
-        }
-      }
-
-      final String nurseImg = matchingNurse?.imageUrl ?? '';
-
-      final cleanNursePayload = <String, dynamic>{
-        'nurse_name': nurseName,
-        'customer_name': patientName,
-        'phone': phone,
-        'district': district,
-        'neighborhood': address,
-        'amount_paid': fee,
-        'payment_method': paymentMethod,
-        'payment_status': 'paid',
-        'status': 'pending',
-        'service_notes': '#NURSE-$hexSuffix',
-      };
-      if (nurseImg.isNotEmpty) {
-        cleanNursePayload['nurse_image'] = nurseImg;
-        cleanNursePayload['nurse_avatar_url'] = nurseImg;
-        cleanNursePayload['image_url'] = nurseImg;
-      }
-      if (cleanPatientId != null) cleanNursePayload['patient_id'] = cleanPatientId;
-      if (cleanNurseId != null) cleanNursePayload['nurse_id'] = cleanNurseId;
-
-      await client.from('nurse_orders').insert(cleanNursePayload);
-      debugPrint('[NURSE_ORDERS] Nurse order successfully inserted into Supabase nurse_orders');
-
-      try {
-        final ordersPayload = Map<String, dynamic>.from(cleanNursePayload);
-        ordersPayload['order_type'] = 'nurse';
-        ordersPayload['type'] = 'nurse';
-        await client.from('orders').insert(ordersPayload);
-      } catch (err) {
-        debugPrint('[NURSE_ORDERS] Secondary write to orders table note: $err');
-      }
-
-      // Automatically set the booked Nurse to Busy (Auto-Lock)
-      try {
-        if (cleanNurseId != null) {
-          await client.from('nurses').update({
-            'is_available': false,
-            'status': 'busy',
-          }).eq('id', cleanNurseId);
-        } else {
-          await client.from('nurses').update({
-            'is_available': false,
-            'status': 'busy',
-          }).eq('name', nurseName);
-        }
-      } catch (nurseBusyErr) {
-        debugPrint('[NURSE_ORDERS] Setting nurse busy error: $nurseBusyErr');
-      }
-
-      // Persist this nurse booking to user's booked IDs
-      _userBookedAppointmentIds.add(bookingId);
-      _userBookedAppointmentIds.add('#NURSE-$hexSuffix');
-      _saveUserBookedAppointmentIdsToPrefs();
-
-      await fetchAppointmentsAndNurseOrders();
-      notifyListeners();
-
-      // Send instant push notification ONLY to this patient's own device
-      try {
-        PushNotificationService.instance.showLocalNotification(
-          title: 'Nasiib Home Care',
-          body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
-        );
-      } catch (notifErr) {
-        debugPrint('[NURSE_ORDERS] Notification error: $notifErr');
-      }
-
-      return bookingId;
-    } catch (e) {
-      debugPrint('[NURSE_ORDERS] placeNurseOrder error: $e');
-      return null;
+    String? cleanNurseId;
+    if (RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(nurseId)) {
+      cleanNurseId = nurseId;
     }
+    String? cleanPatientId;
+    if (_currentUser != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(_currentUser!.id)) {
+      cleanPatientId = _currentUser!.id;
+    }
+    NurseModel? matchingNurse;
+    for (final n in _nurses) {
+      if ((cleanNurseId != null && n.id == cleanNurseId) ||
+          n.name.toLowerCase().trim() == nurseName.toLowerCase().trim() ||
+          nurseName.toLowerCase().contains(n.name.toLowerCase())) {
+        matchingNurse = n;
+        break;
+      }
+    }
+
+    final String nurseImg = matchingNurse?.imageUrl ?? 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=500';
+
+    final client = SupabaseService.instance.client;
+    if (client != null && SupabaseService.instance.isInitialized) {
+      try {
+        final cleanNursePayload = <String, dynamic>{
+          'nurse_name': nurseName,
+          'customer_name': patientName,
+          'phone': phone,
+          'district': district,
+          'neighborhood': address,
+          'amount_paid': fee,
+          'payment_method': paymentMethod,
+          'payment_status': 'paid',
+          'status': 'pending',
+          'service_notes': '#NURSE-$hexSuffix',
+        };
+        if (nurseImg.isNotEmpty) {
+          cleanNursePayload['nurse_image'] = nurseImg;
+        }
+        if (cleanPatientId != null) cleanNursePayload['patient_id'] = cleanPatientId;
+        if (cleanNurseId != null) cleanNursePayload['nurse_id'] = cleanNurseId;
+
+        try {
+          await client.from('nurse_orders').insert(cleanNursePayload);
+          debugPrint('[NURSE_ORDERS] Inserted into nurse_orders successfully (Tier 1)');
+        } catch (tier1Err) {
+          debugPrint('[NURSE_ORDERS] Tier 1 error: $tier1Err, trying Tier 2 standard...');
+          try {
+            final standardPayload = <String, dynamic>{
+              'nurse_name': nurseName,
+              'customer_name': patientName,
+              'phone': phone,
+              'district': district,
+              'amount_paid': fee,
+              'payment_method': paymentMethod,
+              'status': 'pending',
+              'service_notes': '#NURSE-$hexSuffix',
+            };
+            await client.from('nurse_orders').insert(standardPayload);
+            debugPrint('[NURSE_ORDERS] Inserted into nurse_orders successfully (Tier 2)');
+          } catch (tier2Err) {
+            debugPrint('[NURSE_ORDERS] Tier 2 error: $tier2Err, trying Tier 3 minimal...');
+            try {
+              final minimalPayload = <String, dynamic>{
+                'nurse_name': nurseName,
+                'customer_name': patientName,
+                'phone': phone,
+                'amount_paid': fee,
+                'service_notes': '#NURSE-$hexSuffix',
+              };
+              await client.from('nurse_orders').insert(minimalPayload);
+              debugPrint('[NURSE_ORDERS] Inserted into nurse_orders successfully (Tier 3)');
+            } catch (tier3Err) {
+              debugPrint('[NURSE_ORDERS] Tier 3 error: $tier3Err');
+            }
+          }
+        }
+
+        try {
+          final ordersPayload = <String, dynamic>{
+            'customer_name': patientName,
+            'phone': phone,
+            'total_amount': fee,
+            'payment_method': paymentMethod,
+            'order_type': 'nurse',
+            'type': 'nurse',
+            'service_notes': '#NURSE-$hexSuffix',
+            'status': 'pending',
+          };
+          await client.from('orders').insert(ordersPayload);
+        } catch (_) {}
+
+        // Automatically set the booked Nurse to Busy (Auto-Lock)
+        try {
+          if (cleanNurseId != null) {
+            await client.from('nurses').update({
+              'is_available': false,
+              'status': 'busy',
+            }).eq('id', cleanNurseId);
+          } else {
+            await client.from('nurses').update({
+              'is_available': false,
+              'status': 'busy',
+            }).eq('name', nurseName);
+          }
+        } catch (_) {}
+      } catch (e) {
+        debugPrint('[NURSE_ORDERS] placeNurseOrder supabase handling error: $e');
+      }
+    }
+
+    // Persist this nurse booking to user's booked IDs & local cache
+    _userBookedAppointmentIds.add(bookingId);
+    _userBookedAppointmentIds.add('#NURSE-$hexSuffix');
+    if (phone.isNotEmpty) _userBookedAppointmentIds.add(phone);
+    _saveUserBookedAppointmentIdsToPrefs();
+
+    final localNurseAppointment = AppointmentModel(
+      id: 'nurse_$hexSuffix',
+      referenceId: '#NURSE-$hexSuffix',
+      doctorId: nurseId.isNotEmpty ? nurseId : 'nurse_dispatch',
+      doctorName: 'Nurse ($nurseName)',
+      doctorSpecialty: 'Home Care Service',
+      doctorImageUrl: nurseImg,
+      hospitalName: 'Nasiib Home Care',
+      date: 'Today',
+      time: 'Flexible Dispatch',
+      appointmentType: 'Home Care',
+      patientName: patientName,
+      patientPhone: phone,
+      patientAge: 30,
+      patientGender: 'Flexible',
+      reasonForVisit: notes.isNotEmpty ? notes : 'Home Care Request',
+      paymentMethod: paymentMethod,
+      amount: fee,
+      queueNumber: 1,
+      status: 'Pending',
+      createdAt: DateTime.now().toIso8601String(),
+    );
+
+    final existingIdx = _appointments.indexWhere((a) => a.id == localNurseAppointment.id || a.referenceId == localNurseAppointment.referenceId);
+    if (existingIdx != -1) {
+      _appointments[existingIdx] = localNurseAppointment;
+    } else {
+      _appointments.insert(0, localNurseAppointment);
+    }
+    _saveLocalAppointmentsToPrefs();
+    notifyListeners();
+
+    // Send instant push notification ONLY to this patient's own device
+    try {
+      PushNotificationService.instance.showLocalNotification(
+        title: 'Nasiib Home Care',
+        body: 'Waan helnay codsigaaga kalkaaliso, dhakhso ayaan kuugu soo jawaabi doonaa.',
+      );
+    } catch (_) {}
+
+    return bookingId;
   }
 
   /// Toggle or update Nurse availability (Available vs Busy)

@@ -802,8 +802,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
       ),
-    ),
-  );
+    ],
+  ),
+);
 }
 
   Widget _buildRoleSwitchLinks() {

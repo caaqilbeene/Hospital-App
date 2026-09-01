@@ -2450,27 +2450,17 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteAppointment(String id) async {
+    // 1. Remove immediately from local patient screen
     _appointments.removeWhere((a) => a.id == id || a.referenceId == id);
     _deletedAppointments.removeWhere((a) => a.id == id || a.referenceId == id);
     _deletedAppointmentIds.add(id);
     _saveDeletedAppointmentIdsToPrefs();
+    _saveLocalAppointmentsToPrefs();
     notifyListeners();
 
-    final client = SupabaseService.instance.client;
-    if (client != null && SupabaseService.instance.isInitialized) {
-      try {
-        await client.from('appointments').delete().or('id.eq."$id",reference_id.eq."$id"');
-        await client.from('nurse_orders').delete().or('id.eq."$id",booking_id.eq."$id",service_notes.eq."$id"');
-        final cleanId = id.replaceAll('apt_', '').replaceAll('nurse_', '');
-        final parsedInt = int.tryParse(cleanId);
-        if (parsedInt != null) {
-          await client.from('appointments').delete().eq('id', parsedInt);
-        }
-        debugPrint("[SUPABASE_SUCCESS] Permanently deleted appointment $id from Supabase");
-      } catch (e) {
-        debugPrint("[SUPABASE_ERROR] Error deleting appointment from Supabase: $e");
-      }
-    }
+    // 2. We deliberately DO NOT delete the row from Supabase or Web Admin.
+    // This protects hospital accounting, logs, and doctor queues from being erased by patients.
+    debugPrint("[PATIENT_HIDE] Appointment $id hidden from patient device. Supabase & Admin records preserved.");
   }
 
   void restoreAppointment(AppointmentModel appointment) {

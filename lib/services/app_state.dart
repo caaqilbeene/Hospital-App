@@ -2242,7 +2242,6 @@ class AppState extends ChangeNotifier {
     // Persist this booking to the user's booked IDs so it is never dropped on refresh
     if (appointment.id.isNotEmpty) _userBookedAppointmentIds.add(appointment.id);
     if (appointment.referenceId.isNotEmpty) _userBookedAppointmentIds.add(appointment.referenceId);
-    if (appointment.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(appointment.patientPhone);
     _saveUserBookedAppointmentIdsToPrefs();
 
     // Deduplicate in-memory list so duplicate twin records are never added locally
@@ -2399,7 +2398,10 @@ class AppState extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('saved_user_booked_appointment_ids_v1');
       if (list != null) {
-        _userBookedAppointmentIds.addAll(list);
+        // Clean out any accidental phone numbers or short numeric strings
+        final validIds = list.where((item) => !RegExp(r'^\+?[0-9]{7,15}$').hasMatch(item.trim()));
+        _userBookedAppointmentIds.clear();
+        _userBookedAppointmentIds.addAll(validIds);
       }
     } catch (_) {}
   }
@@ -3625,7 +3627,6 @@ class AppState extends ChangeNotifier {
     // Persist this nurse booking to user's booked IDs & local cache
     _userBookedAppointmentIds.add(bookingId);
     _userBookedAppointmentIds.add('#NURSE-$hexSuffix');
-    if (phone.isNotEmpty) _userBookedAppointmentIds.add(phone);
     _saveUserBookedAppointmentIdsToPrefs();
 
     final localNurseAppointment = AppointmentModel(
@@ -4207,25 +4208,20 @@ class AppState extends ChangeNotifier {
     final client = SupabaseService.instance.client;
     if (client == null || !SupabaseService.instance.isInitialized) return;
 
-    final targetPhone = _currentUser?.phoneNumber ?? FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
-    final String cleanPhone = targetPhone.replaceAll(RegExp(r'\D'), '');
-    String baseDigits = cleanPhone;
-    if (baseDigits.startsWith('252') && baseDigits.length >= 12) {
-      baseDigits = baseDigits.substring(3);
+    String extractCorePhone(String raw) {
+      final digits = raw.replaceAll(RegExp(r'\D'), '');
+      if (digits.length >= 9) {
+        return digits.substring(digits.length - 9);
+      }
+      if (digits.length >= 8) {
+        return digits.substring(digits.length - 8);
+      }
+      return '';
     }
-    if (baseDigits.startsWith('0') && baseDigits.length >= 10) {
-      baseDigits = baseDigits.substring(1);
-    }
-    
-    final possibleFormats = [
-      targetPhone,
-      cleanPhone,
-      baseDigits,
-      '0$baseDigits',
-      '252$baseDigits',
-      '+252$baseDigits',
-      _currentUser?.id ?? '',
-    ].where((s) => s.isNotEmpty).toSet().toList();
+
+    final String myPhoneCore = extractCorePhone(
+      _currentUser?.phoneNumber ?? FirebaseAuth.instance.currentUser?.phoneNumber ?? '',
+    );
 
     try {
       await _loadUserBookedAppointmentIdsFromPrefs();
@@ -4234,16 +4230,22 @@ class AppState extends ChangeNotifier {
 
       final List<AppointmentModel> updatedList = [];
 
-      // Include all valid non-deleted locally cached appointments
+      // Include all valid non-deleted locally cached appointments booked on this device/account
       for (final lApt in localCached) {
         if (_deletedAppointmentIds.contains(lApt.id) ||
             (lApt.referenceId.isNotEmpty && _deletedAppointmentIds.contains(lApt.referenceId))) {
           continue;
         }
-        if (lApt.id.isNotEmpty) _userBookedAppointmentIds.add(lApt.id);
-        if (lApt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(lApt.referenceId);
-        if (lApt.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(lApt.patientPhone);
-        updatedList.add(lApt);
+        final bool isLocalBookedByMe = _userBookedAppointmentIds.contains(lApt.id) ||
+            (lApt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(lApt.referenceId));
+        final String lAptCore = extractCorePhone(lApt.patientPhone);
+        final bool matchesLocalPhone = myPhoneCore.isNotEmpty && lAptCore.isNotEmpty && myPhoneCore == lAptCore;
+
+        if (isLocalBookedByMe || matchesLocalPhone) {
+          if (lApt.id.isNotEmpty) _userBookedAppointmentIds.add(lApt.id);
+          if (lApt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(lApt.referenceId);
+          updatedList.add(lApt);
+        }
       }
 
       // 1. Fetch Doctor Appointments exclusively for this patient
@@ -4262,32 +4264,23 @@ class AppState extends ChangeNotifier {
               continue;
             }
 
-            // Match if booked on this device/account OR matches phone/name/user_id
+            // Match ONLY if explicitly booked on this device OR exact phone number match OR exact user ID match
             final bool isBookedByMe = _userBookedAppointmentIds.contains(apt.id) ||
-                (apt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(apt.referenceId)) ||
-                (apt.patientPhone.isNotEmpty && _userBookedAppointmentIds.contains(apt.patientPhone));
+                (apt.referenceId.isNotEmpty && _userBookedAppointmentIds.contains(apt.referenceId));
 
-            final String aptPhone = apt.patientPhone.replaceAll(RegExp(r'\D'), '');
-            final bool matchesPhone = possibleFormats.isNotEmpty && possibleFormats.any((f) {
-              final cleanF = f.replaceAll(RegExp(r'\D'), '');
-              return (cleanF.isNotEmpty && (aptPhone.contains(cleanF) || cleanF.contains(aptPhone))) || apt.patientPhone.contains(f);
-            });
-
-            final bool matchesName = _currentUser != null &&
-                apt.patientName.trim().isNotEmpty &&
-                (apt.patientName.trim().toLowerCase() == _currentUser!.fullName.trim().toLowerCase());
+            final String aptPhoneCore = extractCorePhone(apt.patientPhone);
+            final bool matchesPhone = myPhoneCore.isNotEmpty && aptPhoneCore.isNotEmpty && myPhoneCore == aptPhoneCore;
 
             final String rowUserId = (row['user_id'] ?? row['patient_id'] ?? '').toString();
             final bool matchesUserId = _currentUser != null && rowUserId.isNotEmpty && rowUserId == _currentUser!.id;
 
-            if (!isBookedByMe && !matchesPhone && !matchesName && !matchesUserId) {
-              continue; // Skip appointments belonging to other users
+            if (!isBookedByMe && !matchesPhone && !matchesUserId) {
+              continue; // Strictly skip appointments belonging to other users!
             }
 
             // Ensure tracked in user booked IDs
             if (apt.id.isNotEmpty) _userBookedAppointmentIds.add(apt.id);
             if (apt.referenceId.isNotEmpty) _userBookedAppointmentIds.add(apt.referenceId);
-            if (apt.patientPhone.isNotEmpty) _userBookedAppointmentIds.add(apt.patientPhone);
 
             final idx = updatedList.indexWhere((a) =>
                 a.id == apt.id ||
@@ -4321,20 +4314,14 @@ class AppState extends ChangeNotifier {
                 (refId.isNotEmpty && _userBookedAppointmentIds.contains(refId));
 
             final phone = (nRow['phone'] ?? nRow['patient_phone'] ?? '').toString();
-            final String cleanNPhone = phone.replaceAll(RegExp(r'\D'), '');
-            final bool matchesNPhone = possibleFormats.isNotEmpty && possibleFormats.any((f) {
-              final cleanF = f.replaceAll(RegExp(r'\D'), '');
-              return (cleanF.isNotEmpty && (cleanNPhone.contains(cleanF) || cleanF.contains(cleanNPhone))) || phone.contains(f);
-            });
-
-            final String custName = (nRow['customer_name'] ?? nRow['patient_name'] ?? '').toString().trim().toLowerCase();
-            final bool matchesNName = _currentUser != null && custName.isNotEmpty && custName == _currentUser!.fullName.trim().toLowerCase();
+            final String nPhoneCore = extractCorePhone(phone);
+            final bool matchesNPhone = myPhoneCore.isNotEmpty && nPhoneCore.isNotEmpty && myPhoneCore == nPhoneCore;
 
             final String nUserId = (nRow['patient_id'] ?? nRow['user_id'] ?? '').toString();
             final bool matchesNUserId = _currentUser != null && nUserId.isNotEmpty && nUserId == _currentUser!.id;
 
-            if (!isNurseBookedByMe && !matchesNPhone && !matchesNName && !matchesNUserId) {
-              continue;
+            if (!isNurseBookedByMe && !matchesNPhone && !matchesNUserId) {
+              continue; // Strictly skip other patients' nurse visits!
             }
 
             if (nId.isNotEmpty) _userBookedAppointmentIds.add(nId);

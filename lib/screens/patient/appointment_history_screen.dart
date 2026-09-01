@@ -13,8 +13,6 @@ class AppointmentHistoryScreen extends StatefulWidget {
 }
 
 class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
-  String _selectedFilter = 'All'; // 'All', 'Doctors', 'Nurses'
-
   @override
   void initState() {
     super.initState();
@@ -53,15 +51,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
 
     // Exclusively Doctor Appointments
     final doctorAppointments = sortedAppointments.where((a) => !_isNurseApt(a)).toList();
-
-    final List<AppointmentModel> displayedAppointments;
-    if (_selectedFilter == 'Confirmed') {
-      displayedAppointments = doctorAppointments.where((a) => a.status.toLowerCase() != 'completed' && a.status.toLowerCase() != 'cancelled').toList();
-    } else if (_selectedFilter == 'Completed') {
-      displayedAppointments = doctorAppointments.where((a) => a.status.toLowerCase() == 'completed').toList();
-    } else {
-      displayedAppointments = doctorAppointments;
-    }
+    final List<AppointmentModel> displayedAppointments = doctorAppointments;
 
     final totalPaid = doctorAppointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);
 
@@ -180,35 +170,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
               ),
             ),
 
-            // 2. Filter Category Tabs (All / Confirmed / Completed)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: Row(
-                children: [
-                  _buildFilterTab(
-                    title: 'Dhammaan',
-                    count: doctorAppointments.length,
-                    filterKey: 'All',
-                    icon: Icons.grid_view_rounded,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFilterTab(
-                    title: 'Ballamaha Dhow',
-                    count: doctorAppointments.where((a) => a.status.toLowerCase() != 'completed' && a.status.toLowerCase() != 'cancelled').length,
-                    filterKey: 'Confirmed',
-                    icon: Icons.access_time_rounded,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFilterTab(
-                    title: 'Dhamaystiran',
-                    count: doctorAppointments.where((a) => a.status.toLowerCase() == 'completed').length,
-                    filterKey: 'Completed',
-                    icon: Icons.check_circle_outline_rounded,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
 
             // 3. Scrollable List View
             Expanded(
@@ -224,11 +186,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            _selectedFilter == 'Doctors'
-                                ? 'Wax ballan dhaqtar ah kuma jiraan.'
-                                : (_selectedFilter == 'Nurses'
-                                    ? 'Wax dalab kalkaaliso ah kuma jiraan.'
-                                    : 'Wax ballamo ah kuma jiraan.'),
+                            'Wax ballan dhaqtar ah kuma jiraan.',
                             style: GoogleFonts.plusJakartaSans(
                               color: AppTheme.textSecondary,
                               fontSize: 14,
@@ -557,78 +515,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
     );
   }
 
-  Widget _buildFilterTab({
-    required String title,
-    required int count,
-    required String filterKey,
-    required IconData icon,
-  }) {
-    final bool isSelected = _selectedFilter == filterKey;
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _selectedFilter = filterKey),
-        borderRadius: BorderRadius.circular(14),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? AppTheme.primaryColor : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isSelected ? AppTheme.primaryColor : const Color(0xFFE2E8F0),
-            ),
-            boxShadow: [
-              if (isSelected)
-                BoxShadow(
-                  color: AppTheme.primaryColor.withOpacity(0.25),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    size: 14,
-                    color: isSelected ? Colors.white : AppTheme.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    title,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                      color: isSelected ? Colors.white : AppTheme.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isSelected ? Colors.white.withOpacity(0.2) : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '$count',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : AppTheme.primaryColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 
   void _confirmDeleteDialog(BuildContext context, AppState appState, String id) {
     showDialog(

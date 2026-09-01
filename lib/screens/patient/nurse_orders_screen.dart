@@ -13,7 +13,6 @@ class NurseOrdersScreen extends StatefulWidget {
 }
 
 class _NurseOrdersScreenState extends State<NurseOrdersScreen> {
-  String _selectedFilter = 'All'; // 'All', 'Pending', 'Completed'
 
   @override
   void initState() {
@@ -51,15 +50,6 @@ class _NurseOrdersScreenState extends State<NurseOrdersScreen> {
     // Filter only Nurse Home Care visits
     final nurseVisits = allAppointments.where(_isNurseItem).toList()
       ..sort((a, b) => _parseDateSafe(b.createdAt).compareTo(_parseDateSafe(a.createdAt)));
-
-    final List<AppointmentModel> displayedVisits;
-    if (_selectedFilter == 'Pending') {
-      displayedVisits = nurseVisits.where((v) => v.status.toLowerCase() != 'completed' && v.status.toLowerCase() != 'cancelled').toList();
-    } else if (_selectedFilter == 'Completed') {
-      displayedVisits = nurseVisits.where((v) => v.status.toLowerCase() == 'completed').toList();
-    } else {
-      displayedVisits = nurseVisits;
-    }
 
     final totalSpent = nurseVisits.fold<double>(0.0, (sum, v) => sum + v.amount);
 
@@ -163,74 +153,24 @@ class _NurseOrdersScreenState extends State<NurseOrdersScreen> {
                 ),
               ),
 
-              // 2. Filter Pills
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Row(
-                  children: [
-                    _buildFilterChip('All', 'Dhammaan (${nurseVisits.length})'),
-                    const SizedBox(width: 8),
-                    _buildFilterChip('Pending', 'Socda / Pending'),
-                    const SizedBox(width: 8),
-                    _buildFilterChip('Completed', 'Dhamaystiran'),
-                  ],
-                ),
-              ),
               const SizedBox(height: 8),
 
-              // 3. Nurse Visits List
+              // 2. Nurse Visits List
               Expanded(
-                child: displayedVisits.isEmpty
+                child: nurseVisits.isEmpty
                     ? _buildEmptyState()
                     : ListView.separated(
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        itemCount: displayedVisits.length,
+                        itemCount: nurseVisits.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final visit = displayedVisits[index];
+                          final visit = nurseVisits[index];
                           return _buildNurseVisitCard(context, visit);
                         },
                       ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterChip(String filterKey, String label) {
-    final isSelected = _selectedFilter == filterKey;
-    return GestureDetector(
-      onTap: () {
-        setState(() => _selectedFilter = filterKey);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF059669) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF059669) : const Color(0xFFE2E8F0),
-          ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: const Color(0xFF059669).withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : [],
-        ),
-        child: Text(
-          label,
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 12,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-            color: isSelected ? Colors.white : const Color(0xFF64748B),
           ),
         ),
       ),

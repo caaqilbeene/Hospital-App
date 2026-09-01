@@ -98,6 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         : '',
                     width: 48,
                     height: 48,
+                    fit: BoxFit.cover,
+                    alignment: const Alignment(0.0, -0.35),
                     borderRadius: BorderRadius.circular(24),
                   ),
                   const SizedBox(width: 12),

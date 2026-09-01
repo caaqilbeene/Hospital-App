@@ -70,7 +70,7 @@ class ProfileScreen extends StatelessWidget {
                           width: 96,
                           height: 96,
                           fit: BoxFit.cover,
-                          alignment: Alignment.center,
+                          alignment: const Alignment(0.0, -0.35),
                           borderRadius: BorderRadius.circular(48),
                         ),
                       ),

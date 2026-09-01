@@ -40,6 +40,7 @@ class MainPatientLayout extends StatelessWidget {
         width: 24,
         height: 24,
         fit: BoxFit.cover,
+        alignment: const Alignment(0.0, -0.35),
       ),
     ),
   );

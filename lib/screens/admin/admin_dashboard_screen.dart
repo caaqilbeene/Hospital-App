@@ -373,11 +373,42 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       iconBg = const Color(0xFFDCFCE7);
     }
 
+    final BoxDecoration pageBgDecoration;
+    if (_selectedPortalTab == 'Pharmacy') {
+      pageBgDecoration = const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF064E3B), Color(0xFF047857), Color(0xFF0D9488)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      );
+    } else if (_selectedPortalTab == 'Driver') {
+      pageBgDecoration = const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF1E1B4B), Color(0xFF3730A3), Color(0xFF4F46E5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      );
+    } else {
+      // Doctor Portal - Royal Medical Blue & Cyan
+      pageBgDecoration = const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF0F172A), Color(0xFF1E3A8A), Color(0xFF0284C7)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFF475569), // Modern slate grey
-      body: Center(
-        child: SingleChildScrollView(
-          child: Container(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: pageBgDecoration,
+        child: Center(
+          child: SingleChildScrollView(
+            child: Container(
             width: 420,
             margin: const EdgeInsets.symmetric(vertical: 24),
             padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
@@ -734,8 +765,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildRoleSwitchLinks() {
     final List<Widget> links = [];

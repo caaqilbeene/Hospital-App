@@ -51,19 +51,19 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
     final sortedAppointments = List<AppointmentModel>.from(allAppointments)
       ..sort((a, b) => parseDateSafe(b.createdAt).compareTo(parseDateSafe(a.createdAt)));
 
+    // Exclusively Doctor Appointments
     final doctorAppointments = sortedAppointments.where((a) => !_isNurseApt(a)).toList();
-    final nurseAppointments = sortedAppointments.where((a) => _isNurseApt(a)).toList();
 
     final List<AppointmentModel> displayedAppointments;
-    if (_selectedFilter == 'Doctors') {
-      displayedAppointments = doctorAppointments;
-    } else if (_selectedFilter == 'Nurses') {
-      displayedAppointments = nurseAppointments;
+    if (_selectedFilter == 'Confirmed') {
+      displayedAppointments = doctorAppointments.where((a) => a.status.toLowerCase() != 'completed' && a.status.toLowerCase() != 'cancelled').toList();
+    } else if (_selectedFilter == 'Completed') {
+      displayedAppointments = doctorAppointments.where((a) => a.status.toLowerCase() == 'completed').toList();
     } else {
-      displayedAppointments = sortedAppointments;
+      displayedAppointments = doctorAppointments;
     }
 
-    final totalPaid = displayedAppointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);
+    final totalPaid = doctorAppointments.fold<double>(0.0, (sum, apt) => sum + apt.amount);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F8),
@@ -75,7 +75,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'Appointment History',
+          'Doctor Appointments',
           style: GoogleFonts.plusJakartaSans(
             color: AppTheme.textPrimary,
             fontWeight: FontWeight.bold,
@@ -117,9 +117,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _selectedFilter == 'Doctors'
-                              ? 'Doctor Bookings'
-                              : (_selectedFilter == 'Nurses' ? 'Nurse Orders' : 'Total Bookings'),
+                          'Doctor Bookings',
                           style: GoogleFonts.plusJakartaSans(
                             color: Colors.white70,
                             fontSize: 13,
@@ -131,7 +129,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                             const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 20),
                             const SizedBox(width: 8),
                             Text(
-                              '${displayedAppointments.length}',
+                              '${doctorAppointments.length}',
                               style: GoogleFonts.plusJakartaSans(
                                 color: Colors.white,
                                 fontSize: 24,
@@ -154,7 +152,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Total Amount Paid',
+                          'Total Consultation Paid',
                           style: GoogleFonts.plusJakartaSans(
                             color: Colors.white70,
                             fontSize: 13,
@@ -182,30 +180,30 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
               ),
             ),
 
-            // 2. Filter Category Tabs (All / Doctors / Nurses)
+            // 2. Filter Category Tabs (All / Confirmed / Completed)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0),
               child: Row(
                 children: [
                   _buildFilterTab(
                     title: 'Dhammaan',
-                    count: allAppointments.length,
+                    count: doctorAppointments.length,
                     filterKey: 'All',
                     icon: Icons.grid_view_rounded,
                   ),
                   const SizedBox(width: 8),
                   _buildFilterTab(
-                    title: 'Dhaqaatiirta',
-                    count: doctorAppointments.length,
-                    filterKey: 'Doctors',
-                    icon: Icons.medical_services_rounded,
+                    title: 'Ballamaha Dhow',
+                    count: doctorAppointments.where((a) => a.status.toLowerCase() != 'completed' && a.status.toLowerCase() != 'cancelled').length,
+                    filterKey: 'Confirmed',
+                    icon: Icons.access_time_rounded,
                   ),
                   const SizedBox(width: 8),
                   _buildFilterTab(
-                    title: 'Kalkaalisada',
-                    count: nurseAppointments.length,
-                    filterKey: 'Nurses',
-                    icon: Icons.healing_rounded,
+                    title: 'Dhamaystiran',
+                    count: doctorAppointments.where((a) => a.status.toLowerCase() == 'completed').length,
+                    filterKey: 'Completed',
+                    icon: Icons.check_circle_outline_rounded,
                   ),
                 ],
               ),

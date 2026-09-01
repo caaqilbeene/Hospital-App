@@ -10,6 +10,7 @@ import '../auth/login_screen.dart';
 import 'my_orders_screen.dart';
 import 'settings_screen.dart';
 import 'appointment_history_screen.dart';
+import 'nurse_orders_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -156,13 +157,28 @@ class ProfileScreen extends StatelessWidget {
               _buildMenuItem(
                 context,
                 icon: Icons.calendar_today_rounded,
-                title: 'My Appointments History',
-                subtitle: '${appointments.length} active bookings',
+                title: 'Doctor Appointments',
+                subtitle: '${appointments.where((a) => !a.doctorId.toLowerCase().startsWith('nurse') && !a.doctorSpecialty.toLowerCase().contains('home care')).length} doctor bookings',
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => const AppointmentHistoryScreen(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildMenuItem(
+                context,
+                icon: Icons.medical_services_outlined,
+                title: 'Nurse Home Visits',
+                subtitle: '${appointments.where((a) => a.doctorId.toLowerCase().startsWith('nurse') || a.doctorSpecialty.toLowerCase().contains('home care')).length} nurse visits',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const NurseOrdersScreen(),
                     ),
                   );
                 },

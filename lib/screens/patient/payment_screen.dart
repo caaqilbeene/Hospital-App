@@ -14,6 +14,8 @@ import '../../services/app_state.dart';
 import '../../services/push_notification_service.dart';
 import '../../utils/somali_phone_formatter.dart';
 import 'appointment_confirmed_screen.dart';
+import 'appointment_history_screen.dart';
+import 'nurse_orders_screen.dart';
 import 'main_patient_layout.dart';
 import 'my_orders_screen.dart';
 
@@ -1525,7 +1527,77 @@ void _showPaymentSuccessDialog({
                       ),
                     ),
                   ),
-                  if (!isNurse && !isDoctorAppointment) ...[
+                  if (isNurse) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pushAndRemoveUntil(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const NurseOrdersScreen(),
+                            ),
+                            (route) => route.isFirst,
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(
+                            color: Color(0xFF059669),
+                            width: 1.5,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          'VIEW NURSE VISITS',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF059669),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ] else if (isDoctorAppointment) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pushAndRemoveUntil(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const AppointmentHistoryScreen(),
+                            ),
+                            (route) => route.isFirst,
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(
+                            color: Color(0xFF0D7C66),
+                            width: 1.5,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          'VIEW APPOINTMENTS',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF0D7C66),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,

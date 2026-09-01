@@ -373,56 +373,93 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       iconBg = const Color(0xFFDCFCE7);
     }
 
-    final BoxDecoration pageBgDecoration;
+    // Background image & gradient configuration per portal
+    final String? bgImageUrl;
+    final String? bgAssetPath;
+    final LinearGradient bgOverlayGradient;
+
     if (_selectedPortalTab == 'Pharmacy') {
-      pageBgDecoration = const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF064E3B), Color(0xFF047857), Color(0xFF0D9488)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+      bgImageUrl = null;
+      bgAssetPath = 'assets/images/nasiib_hospital_logo.png';
+      bgOverlayGradient = const LinearGradient(
+        colors: [Color(0xF5064E3B), Color(0xE8065F46), Color(0xDC047857)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
       );
     } else if (_selectedPortalTab == 'Driver') {
-      pageBgDecoration = const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E1B4B), Color(0xFF3730A3), Color(0xFF4F46E5)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+      bgImageUrl = null;
+      bgAssetPath = 'assets/images/delivery_driver_bg.png';
+      bgOverlayGradient = const LinearGradient(
+        colors: [Color(0xF51E1B4B), Color(0xE8312E81), Color(0xDC3730A3)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
       );
     } else {
-      // Doctor Portal - Royal Medical Blue & Cyan
-      pageBgDecoration = const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF0F172A), Color(0xFF1E3A8A), Color(0xFF0284C7)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+      // Doctor Portal: Soft Stethoscope & Clinical Atmosphere
+      bgImageUrl = 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?w=1600';
+      bgAssetPath = null;
+      bgOverlayGradient = const LinearGradient(
+        colors: [Color(0xF50F172A), Color(0xE81E3A8A), Color(0xDC0369A1)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
       );
     }
 
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: pageBgDecoration,
-        child: Center(
-          child: SingleChildScrollView(
-            child: Container(
-            width: 420,
-            margin: const EdgeInsets.symmetric(vertical: 24),
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.15),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+      body: Stack(
+        children: [
+          // 1. Background Image (Network or Asset)
+          if (bgImageUrl != null)
+            Positioned.fill(
+              child: Image.network(
+                bgImageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox(),
+              ),
             ),
+          if (bgAssetPath != null)
+            Positioned.fill(
+              child: Center(
+                child: Opacity(
+                  opacity: 0.18,
+                  child: Image.asset(
+                    bgAssetPath,
+                    width: 500,
+                    height: 500,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox(),
+                  ),
+                ),
+              ),
+            ),
+
+          // 2. Soft Elegant Gradient Overlay
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: bgOverlayGradient,
+              ),
+            ),
+          ),
+
+          // 3. Central Login Card
+          Center(
+            child: SingleChildScrollView(
+              child: Container(
+                width: 430,
+                margin: const EdgeInsets.symmetric(vertical: 24),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 30,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

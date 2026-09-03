@@ -130,7 +130,8 @@ class OnboardingScreen extends StatelessWidget {
                     height: 54,
                     child: ElevatedButton(
                       onPressed: () {
-                        Navigator.push(
+                        context.read<AppState>().setHasSeenOnboarding(true);
+                        Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
                             builder: (_) => const LoginScreen(),

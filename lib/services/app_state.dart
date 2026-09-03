@@ -133,9 +133,22 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  bool _hasSeenOnboarding = false;
+  bool get hasSeenOnboarding => _hasSeenOnboarding;
+
+  Future<void> setHasSeenOnboarding(bool value) async {
+    _hasSeenOnboarding = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('has_seen_onboarding_v1', value);
+    } catch (_) {}
+    notifyListeners();
+  }
+
   Future<void> _loadProfileFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      _hasSeenOnboarding = prefs.getBool('has_seen_onboarding_v1') ?? false;
       _isLoggedIn = prefs.getBool('is_logged_in_v1') ?? (FirebaseAuth.instance.currentUser != null);
       if (_isLoggedIn && prefs.containsKey('user_profile_v1')) {
         final jsonStr = prefs.getString('user_profile_v1');
@@ -1354,8 +1367,10 @@ class AppState extends ChangeNotifier {
     }
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
       await prefs.setBool('is_logged_in_v1', false);
+      await prefs.remove('user_profile_v1');
+      await prefs.remove('saved_user_avatar_v1');
+      await prefs.setBool('has_seen_onboarding_v1', true);
     } catch (e) {
       debugPrint("Prefs clear error: $e");
     }
@@ -1489,6 +1504,39 @@ class AppState extends ChangeNotifier {
             } catch (e) {
               debugPrint("[SUPABASE_PROFILE] phone_number inFilter notice: $e");
             }
+            if (data == null) {
+              try {
+                data = await client
+                    .from('patients')
+                    .select('*')
+                    .inFilter('phone', possible)
+                    .maybeSingle();
+              } catch (e) {
+                debugPrint("[SUPABASE_PROFILE] phone inFilter notice: $e");
+              }
+            }
+            if (data == null) {
+              try {
+                for (final id in possible) {
+                  final doc = await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(id)
+                      .get()
+                      .timeout(const Duration(seconds: 2));
+                  if (doc.exists && doc.data() != null && doc.data()!.isNotEmpty) {
+                    final d = doc.data()!;
+                    data = {
+                      'id': d['id'] ?? d['uid'] ?? id,
+                      'full_name': d['fullName'] ?? d['name'] ?? 'Patient',
+                      'phone_number': d['phoneNumber'] ?? d['phone'] ?? targetPhone,
+                      'email': d['email'] ?? '',
+                      'avatar_url': d['avatarUrl'] ?? '',
+                    };
+                    break;
+                  }
+                }
+              } catch (_) {}
+            }
           }
         }
 
@@ -1509,8 +1557,22 @@ class AppState extends ChangeNotifier {
           _isLoggedIn = true;
           _saveProfileToPrefs();
           await loadNotificationsFromSupabase();
+          await fetchAppointmentsAndNurseOrders();
           notifyListeners();
           debugPrint("[SUPABASE_PROFILE] Successfully loaded patient full_name: $fetchedName");
+        } else if (phone != null && phone.isNotEmpty) {
+          _currentUser = UserModel(
+            id: uid ?? 'usr_${DateTime.now().millisecondsSinceEpoch}',
+            fullName: 'Patient',
+            phoneNumber: phone,
+            email: '',
+            avatarUrl: '',
+            createdAt: DateTime.now(),
+          );
+          _isLoggedIn = true;
+          _saveProfileToPrefs();
+          await fetchAppointmentsAndNurseOrders();
+          notifyListeners();
         }
       }
     } catch (e) {

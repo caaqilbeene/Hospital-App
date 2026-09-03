@@ -8,6 +8,7 @@ import 'services/supabase_service.dart';
 import 'services/firebase_auth_service.dart';
 import 'screens/patient/main_patient_layout.dart';
 import 'screens/onboarding_screen.dart';
+import 'screens/auth/login_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/driver/driver_portal_screen.dart';
 
@@ -55,6 +56,12 @@ class NasiibHospitalApp extends StatelessWidget {
             isUserAuth = false;
           }
 
+          final Widget patientDefaultScreen = isUserAuth
+              ? const MainPatientLayout()
+              : (appState.hasSeenOnboarding
+                  ? const LoginScreen()
+                  : const OnboardingScreen());
+
           return MaterialApp(
             title: 'Nasiib Hospital',
             debugShowCheckedModeBanner: false,
@@ -73,9 +80,7 @@ class NasiibHospitalApp extends StatelessWidget {
 
               if (path.contains('/patient') || basePath.contains('/patient')) {
                 return MaterialPageRoute(
-                  builder: (_) => isUserAuth
-                      ? const MainPatientLayout()
-                      : const OnboardingScreen(),
+                  builder: (_) => patientDefaultScreen,
                   settings: settings,
                 );
               }
@@ -88,18 +93,14 @@ class NasiibHospitalApp extends StatelessWidget {
               }
 
               return MaterialPageRoute(
-                builder: (_) => isUserAuth
-                    ? const MainPatientLayout()
-                    : const OnboardingScreen(),
+                builder: (_) => patientDefaultScreen,
                 settings: settings,
               );
             },
             routes: {
               '/driver': (context) => const DriverPortalScreen(),
               '/admin': (context) => const AdminDashboardScreen(),
-              '/patient': (context) => isUserAuth
-                  ? const MainPatientLayout()
-                  : const OnboardingScreen(),
+              '/patient': (context) => patientDefaultScreen,
             },
           );
         },

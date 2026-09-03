@@ -12,6 +12,7 @@ import FirebaseAuth
     if FirebaseApp.app() == nil {
       FirebaseApp.configure()
     }
+    application.registerForRemoteNotifications()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
